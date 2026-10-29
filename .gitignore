@@ -1,0 +1,68 @@
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Go build outputs and binaries
+/bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Go test and coverage artifacts
+*.test
+coverage.out
+coverage.txt
+coverage.html
+profile.out
+
+# Go workspace
+go.work
+go.work.sum
+
+# Local PostgreSQL cluster and data dumps
+/.postgres/
+/data/
+/fresh-data/
+*.dump
+*.sql.gz
+
+# Python cache & virtual environments
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+
+# Node & web dependencies/logs
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# General logs and temp files
+*.log
+tmp/
+temp/
+
+# OS-generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE and editor directories
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
+*.swp
+*.swo
+*~

@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f7f8fa">
+  <title>product-analytics</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+
+  <!-- ========================================================================
+       1. Welcome & Onboarding View
+       ======================================================================== -->
+  <section id="welcome" class="welcome-page" hidden aria-labelledby="welcome-title">
+    <header class="welcome-header">
+      <div class="brand">
+        <span class="brand-mark">ϟ</span> product-analytics<span class="brand-dot">.</span>
+      </div>
+      <span class="welcome-label">YOUR FIRST STEPS</span>
+    </header>
+
+    <div class="welcome-layout">
+      <div class="welcome-intro">
+        <div class="eyebrow">WELCOME TO PRODUCT-ANALYTICS</div>
+        <h1 id="welcome-title">Meet your product.<br>Through your people.</h1>
+        <p>Turn the things people do in your product into answers you can act on. Let’s get your first product connected.</p>
+        <div class="welcome-benefits">
+          <span>✓ Your data, on your infrastructure</span>
+          <span>✓ One service for all your products</span>
+          <span>✓ Browser and backend tracking</span>
+        </div>
+        <button id="welcome-start" class="button primary">
+          Get started <span>→</span>
+        </button>
+        <p class="welcome-footnote">A few small steps. A clearer picture.</p>
+      </div>
+
+      <div class="welcome-guide">
+        <div class="welcome-guide-heading">
+          <span class="signal-icon">✧</span>
+          <h2>A little setup.<br>A lot of understanding.</h2>
+        </div>
+        <ol class="welcome-steps">
+          <li id="welcome-auth-step">
+            <span class="welcome-step-number">1</span>
+            <div>
+              <h3>Open your workspace</h3>
+              <p>Sign in with the admin token from your server.</p>
+            </div>
+          </li>
+          <li>
+            <span class="welcome-step-number">2</span>
+            <div>
+              <h3>Add your first product</h3>
+              <p>Create a project and choose where your events can come from.</p>
+            </div>
+          </li>
+          <li>
+            <span class="welcome-step-number">3</span>
+            <div>
+              <h3>Follow your first signal</h3>
+              <p>Install the SDK, send an event, and start exploring what people do.</p>
+            </div>
+          </li>
+        </ol>
+        <div class="welcome-guide-note">Start with one product. Add more whenever you’re ready.</div>
+      </div>
+    </div>
+
+    <footer class="welcome-footer">
+      <span>ϟ Independent analytics. Built around your products.</span>
+    </footer>
+  </section>
+
+  <!-- ========================================================================
+       2. Login View
+       ======================================================================== -->
+  <div id="login" class="login-page" hidden>
+    <div class="login-card">
+      <div class="brand">
+        <span class="brand-mark">ϟ</span> product-analytics<span class="brand-dot">.</span>
+      </div>
+      <div class="eyebrow">YOUR PRODUCT, UNDERSTOOD</div>
+      <h1>Follow the signal.</h1>
+      <p>Sign in to turn your product activity into your next move.</p>
+
+      <form id="login-form">
+        <label for="token">Admin token</label>
+        <input id="token" type="password" placeholder="Paste the token from your Go server" required autocomplete="current-password">
+        <button class="button primary" type="submit">
+          Open your workspace <span>↗</span>
+        </button>
+        <p class="muted small">Your token is printed in the server terminal or set with PRODUCT_ANALYTICS_ADMIN_TOKEN.</p>
+        <p id="login-error" class="error" role="alert"></p>
+      </form>
+    </div>
+
+    <div class="login-pattern">
+      <div class="orb"></div>
+      <span>Less guesswork.<br>More forward.</span>
+      <p>Independent analytics. Built around your products.</p>
+    </div>
+  </div>
+
+  <!-- ========================================================================
+       3. Main Application Shell
+       ======================================================================== -->
+  <div id="shell" hidden>
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <a href="#overview" class="brand">
+        <span class="brand-mark">ϟ</span> product-analytics<span class="brand-dot">.</span><span class="beta">BETA</span>
+      </a>
+
+      <button id="project-picker" class="project-switch">
+        <span class="project-avatar">A</span>
+        <span>
+          <strong id="project-name">Your workspace</strong>
+          <small>Project workspace</small>
+        </span>
+        <span class="chevrons">⌃<br>⌄</span>
+      </button>
+
+      <div id="project-menu" class="project-menu" hidden></div>
+
+      <div class="nav-label">WORKSPACE</div>
+      <nav>
+        <a href="#overview" data-view="overview"><span data-icon="overview"></span> Overview <i></i></a>
+        <a href="#events" data-view="events"><span data-icon="events"></span> Events <span class="live-dot"></span></a>
+        <a href="#funnels" data-view="funnels"><span data-icon="funnels"></span> Funnels</a>
+        <a href="#retention" data-view="retention"><span data-icon="retention"></span> Retention</a>
+        <a href="#people" data-view="people"><span data-icon="people"></span> People</a>
+      </nav>
+
+      <div class="nav-label build-label">BUILD WITH PRODUCT-ANALYTICS</div>
+      <nav>
+        <a href="#setup" data-view="setup"><span data-icon="code"></span> Set up tracking <span class="tiny-arrow">↗</span></a>
+        <a href="#settings" data-view="settings"><span data-icon="settings"></span> Project settings</a>
+      </nav>
+
+      <div class="sidebar-bottom">
+        <div class="signal-card">
+          <span class="signal-icon">✧</span>
+          <strong>Small signals. Big moves.</strong>
+          <p>Your next good decision starts with a little curiosity.</p>
+          <a href="#events">Explore your events <span>→</span></a>
+        </div>
+
+        <button id="account" class="account">
+          <span class="account-avatar">Y</span>
+          <span>
+            <strong>Your workspace</strong>
+            <small>Administrator</small>
+          </span>
+          <span data-icon="logout"></span>
+        </button>
+      </div>
+    </aside>
+
+    <!-- Main Shell Content Area -->
+    <div class="main-shell">
+      <!-- Topbar -->
+      <header class="topbar">
+        <div class="breadcrumbs">
+          <span data-icon="grid"></span>
+          <span>Workspace</span>
+          <span class="slash">/</span>
+          <strong id="crumb">Overview</strong>
+        </div>
+
+        <div class="topbar-right">
+          <span class="service-status"><i></i> Service connected</span>
+          <button class="icon-button" id="help" aria-label="Tracking guide" title="Tracking guide">
+            <span data-icon="help"></span>
+          </button>
+          <span class="top-avatar">Y</span>
+        </div>
+      </header>
+
+      <!-- Main Page Content -->
+      <main>
+        <div class="page-heading">
+          <div>
+            <div class="eyebrow" id="page-eyebrow">THE BIG PICTURE</div>
+            <h1 id="page-title">Product overview<span class="heading-dot">.</span></h1>
+            <p id="page-subtitle">See what’s happening. Understand what’s working.</p>
+          </div>
+          <div class="heading-actions">
+            <button id="refresh" class="button"><span data-icon="refresh"></span> Refresh</button>
+            <button id="new-project" class="button primary"><span data-icon="plus"></span> New project</button>
+          </div>
+        </div>
+
+        <!-- Filter / Date Range Toolbar -->
+        <div id="toolbar" class="toolbar">
+          <div class="toolbar-left">
+            <span class="project-chip"><i></i><span id="chip-name">Acme Web</span></span>
+            <span class="toolbar-divider"></span>
+            <span class="muted small">All users</span>
+          </div>
+          <div class="toolbar-right">
+            <span data-icon="calendar"></span>
+            <select id="date-range" aria-label="Date range">
+              <option value="7">Last 7 days</option>
+              <option value="30" selected>Last 30 days</option>
+              <option value="90">Last 90 days</option>
+            </select>
+            <span class="utc">UTC</span>
+          </div>
+        </div>
+
+        <!-- Dynamic View Container -->
+        <div id="content" aria-live="polite"></div>
+
+        <!-- Footer -->
+        <footer>
+          <span><span class="footer-logo">ϟ</span> A little clarity goes a long way.</span>
+          <span id="updated">Live from your product</span>
+        </footer>
+      </main>
+    </div>
+  </div>
+
+  <!-- ========================================================================
+       4. Dialogs / Modals & Notifications
+       ======================================================================== -->
+  <!-- Dialog: Add Project -->
+  <dialog id="project-dialog">
+    <form id="project-form">
+      <div class="dialog-heading">
+        <span class="eyebrow">A NEW PERSPECTIVE</span>
+        <button type="button" class="icon-button close-dialog" aria-label="Close">×</button>
+      </div>
+      <h2>Add your product</h2>
+      <p>One service. A separate space for every product.</p>
+
+      <label for="new-name">Project name</label>
+      <input id="new-name" placeholder="e.g. Acme Mobile" maxlength="80" required>
+
+      <label for="new-origins">Allowed browser origins</label>
+      <textarea id="new-origins" placeholder="https://your-product.com&#10;http://localhost:3000" rows="3"></textarea>
+      <p class="muted small">One exact origin per line, without a trailing slash. Server-side ingestion works without an origin.</p>
+
+      <p id="project-error" class="error" role="alert"></p>
+      <button type="submit" class="button primary wide">Create project <span>→</span></button>
+    </form>
+  </dialog>
+
+  <!-- Dialog: Event / Person Details -->
+  <dialog id="detail-dialog">
+    <div class="dialog-heading">
+      <span class="eyebrow">FOLLOW THE ACTIVITY</span>
+      <button type="button" class="icon-button close-dialog" aria-label="Close">×</button>
+    </div>
+    <div id="detail-content"></div>
+  </dialog>
+
+  <!-- Notification Toast -->
+  <div id="toast" class="toast" role="status" hidden></div>
+
+</body>
+</html>

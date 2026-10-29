@@ -1,0 +1,33 @@
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: product_analytics
+      POSTGRES_USER: product_analytics
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-55433}:5432"
+    volumes:
+      - product_analytics_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U product_analytics -d product_analytics"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+  app:
+    build: .
+    environment:
+      DATABASE_URL: postgres://product_analytics:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db:5432/product_analytics?sslmode=disable
+      PRODUCT_ANALYTICS_ADMIN_TOKEN: ${PRODUCT_ANALYTICS_ADMIN_TOKEN:?Set PRODUCT_ANALYTICS_ADMIN_TOKEN in .env}
+      PRODUCT_ANALYTICS_SECURE_COOKIES: ${PRODUCT_ANALYTICS_SECURE_COOKIES:-true}
+      PRODUCT_ANALYTICS_MAX_EVENTS_PER_PROJECT: ${PRODUCT_ANALYTICS_MAX_EVENTS_PER_PROJECT:-1000000}
+      PRODUCT_ANALYTICS_MAX_QUERY_EVENTS: ${PRODUCT_ANALYTICS_MAX_QUERY_EVENTS:-100000}
+    ports:
+      - "127.0.0.1:${PRODUCT_ANALYTICS_PORT:-8080}:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+volumes:
+  product_analytics_postgres:
