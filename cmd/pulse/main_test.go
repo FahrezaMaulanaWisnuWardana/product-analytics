@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"product-analytics/internal/analytics"
-	"product-analytics/internal/testdb"
+	"pulse/internal/analytics"
+	"pulse/internal/testdb"
 )
 
 func testServer(t *testing.T) (*server, http.Handler) {

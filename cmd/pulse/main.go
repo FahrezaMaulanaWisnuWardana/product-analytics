@@ -20,8 +20,8 @@ import (
 	"syscall"
 	"time"
 
-	"product-analytics/internal/analytics"
-	"product-analytics/web"
+	"pulse/internal/analytics"
+	"pulse/web"
 )
 
 type server struct {
@@ -41,11 +41,11 @@ func main() {
 		log.Fatal(err)
 	}
 	defer store.Close()
-	maxEvents, err := positiveEnvInt("PRODUCT_ANALYTICS_MAX_EVENTS_PER_PROJECT", analytics.DefaultMaxEventsPerProject)
+	maxEvents, err := positiveEnvInt("PULSE_MAX_EVENTS_PER_PROJECT", "PRODUCT_ANALYTICS_MAX_EVENTS_PER_PROJECT", analytics.DefaultMaxEventsPerProject)
 	if err != nil {
 		log.Fatal(err)
 	}
-	maxQueryEvents, err := positiveEnvInt("PRODUCT_ANALYTICS_MAX_QUERY_EVENTS", analytics.DefaultMaxQueryEvents)
+	maxQueryEvents, err := positiveEnvInt("PULSE_MAX_QUERY_EVENTS", "PRODUCT_ANALYTICS_MAX_QUERY_EVENTS", analytics.DefaultMaxQueryEvents)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -69,11 +69,11 @@ func main() {
 		log.Print("Database migrations are up to date")
 		return
 	}
-	token := os.Getenv("PRODUCT_ANALYTICS_ADMIN_TOKEN")
+	token := envValue("PULSE_ADMIN_TOKEN", "PRODUCT_ANALYTICS_ADMIN_TOKEN")
 	if token == "" {
-		log.Fatal("PRODUCT_ANALYTICS_ADMIN_TOKEN is required; generate a long random value and keep it out of logs")
+		log.Fatal("PULSE_ADMIN_TOKEN is required; generate a long random value and keep it out of logs")
 	}
-	secure, err := boolEnv("PRODUCT_ANALYTICS_SECURE_COOKIES", true)
+	secure, err := boolEnv("PULSE_SECURE_COOKIES", "PRODUCT_ANALYTICS_SECURE_COOKIES", true)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func main() {
 		defer cancel()
 		_ = httpServer.Shutdown(shutdown)
 	}()
-	log.Printf("product-analytics is running at http://%s", *addr)
+	log.Printf("Pulse is running at http://%s", *addr)
 	if err = httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
 	}
@@ -105,7 +105,7 @@ func (s *server) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/login", s.login)
 	mux.HandleFunc("POST /api/logout", func(w http.ResponseWriter, r *http.Request) {
-		http.SetCookie(w, &http.Cookie{Name: "product_analytics_admin", Value: "", Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: s.secure})
+		http.SetCookie(w, &http.Cookie{Name: "pulse_admin", Value: "", Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: s.secure})
 		respond(w, 200, map[string]bool{"ok": true})
 	})
 	mux.HandleFunc("/capture", s.capture)
@@ -182,6 +182,9 @@ func (s *server) auth(next http.Handler) http.Handler {
 			return
 		}
 		token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if c, err := r.Cookie("pulse_admin"); err == nil && token == "" {
+			token = c.Value
+		}
 		if c, err := r.Cookie("product_analytics_admin"); err == nil && token == "" {
 			token = c.Value
 		}
@@ -220,7 +223,7 @@ func (s *server) login(w http.ResponseWriter, r *http.Request) {
 		fail(w, 401, "That admin token is not valid.")
 		return
 	}
-	http.SetCookie(w, &http.Cookie{Name: "product_analytics_admin", Value: input.Token, Path: "/", MaxAge: 86400, HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: s.secure})
+	http.SetCookie(w, &http.Cookie{Name: "pulse_admin", Value: input.Token, Path: "/", MaxAge: 86400, HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: s.secure})
 	respond(w, 200, map[string]bool{"ok": true})
 }
 func loopbackHost(hostport string) bool {
@@ -238,8 +241,14 @@ func loopbackHost(hostport string) bool {
 func loopbackRequest(r *http.Request) bool {
 	return loopbackHost(r.Host) && loopbackHost(r.RemoteAddr)
 }
-func positiveEnvInt(name string, fallback int) (int, error) {
-	raw := strings.TrimSpace(os.Getenv(name))
+func envValue(name, legacyName string) string {
+	if value := os.Getenv(name); value != "" {
+		return value
+	}
+	return os.Getenv(legacyName)
+}
+func positiveEnvInt(name, legacyName string, fallback int) (int, error) {
+	raw := strings.TrimSpace(envValue(name, legacyName))
 	if raw == "" {
 		return fallback, nil
 	}
@@ -249,8 +258,8 @@ func positiveEnvInt(name string, fallback int) (int, error) {
 	}
 	return value, nil
 }
-func boolEnv(name string, fallback bool) (bool, error) {
-	raw := strings.TrimSpace(os.Getenv(name))
+func boolEnv(name, legacyName string, fallback bool) (bool, error) {
+	raw := strings.TrimSpace(envValue(name, legacyName))
 	if raw == "" {
 		return fallback, nil
 	}
@@ -471,7 +480,7 @@ func (s *server) api(w http.ResponseWriter, r *http.Request) {
 		}
 		respond(w, 200, analytics.Retention(all, from, to))
 	case "/api/export":
-		w.Header().Set("Content-Disposition", "attachment; filename=product-analytics-events.json")
+		w.Header().Set("Content-Disposition", "attachment; filename=pulse-events.json")
 		respond(w, 200, events)
 	default:
 		fail(w, 404, "Endpoint not found")

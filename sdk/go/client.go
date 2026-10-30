@@ -1,5 +1,5 @@
-// Package productanalytics sends product events to an independent product-analytics service.
-package productanalytics
+// Package pulse sends product events to an independent Pulse service.
+package pulse
 
 import (
 	"bytes"
@@ -89,7 +89,7 @@ func (c *Client) CaptureBatch(ctx context.Context, events []Event) (int, error) 
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusAccepted {
 		detail, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
-		return 0, fmt.Errorf("product-analytics: HTTP %d: %s", response.StatusCode, strings.TrimSpace(string(detail)))
+		return 0, fmt.Errorf("Pulse: HTTP %d: %s", response.StatusCode, strings.TrimSpace(string(detail)))
 	}
 	var result struct {
 		Accepted int `json:"accepted"`

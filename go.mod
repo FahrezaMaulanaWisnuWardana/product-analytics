@@ -1,4 +1,4 @@
-module product-analytics
+module pulse
 
 go 1.25.0
 

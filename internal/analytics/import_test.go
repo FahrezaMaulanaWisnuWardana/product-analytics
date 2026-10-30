@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"product-analytics/internal/testdb"
+	"pulse/internal/testdb"
 )
 
 func legacy(projects []Project, events []Event) string {

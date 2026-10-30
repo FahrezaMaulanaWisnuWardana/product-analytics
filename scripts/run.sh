@@ -6,4 +6,4 @@ if [[ -f .env ]]; then
   source .env
   set +a
 fi
-exec go run ./cmd/product-analytics "$@"
+exec go run ./cmd/pulse "$@"

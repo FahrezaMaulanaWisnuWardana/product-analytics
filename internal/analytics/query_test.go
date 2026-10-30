@@ -3,7 +3,7 @@ package analytics
 import (
 	"errors"
 	"fmt"
-	"product-analytics/internal/testdb"
+	"pulse/internal/testdb"
 	"sync"
 	"testing"
 	"time"

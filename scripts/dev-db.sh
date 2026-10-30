@@ -17,12 +17,12 @@ if [[ ! -f .env ]]; then
   admin_token="$(openssl rand -hex 32)"
   cat > .env <<CONFIG
 POSTGRES_PASSWORD=$db_password
-PRODUCT_ANALYTICS_ADMIN_TOKEN=$admin_token
+PULSE_ADMIN_TOKEN=$admin_token
 POSTGRES_PORT=55433
-PRODUCT_ANALYTICS_PORT=8080
-PRODUCT_ANALYTICS_SECURE_COOKIES=false
-PRODUCT_ANALYTICS_MAX_EVENTS_PER_PROJECT=1000000
-PRODUCT_ANALYTICS_MAX_QUERY_EVENTS=100000
+PULSE_PORT=8080
+PULSE_SECURE_COOKIES=false
+PULSE_MAX_EVENTS_PER_PROJECT=1000000
+PULSE_MAX_QUERY_EVENTS=100000
 DATABASE_URL=postgres://product_analytics:$db_password@127.0.0.1:55433/product_analytics?sslmode=disable
 CONFIG
   echo 'Created .env with random local database and administrator credentials.'

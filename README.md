@@ -1,4 +1,4 @@
-# product-analytics
+# Pulse
 
 An independent product analytics service written in Go, backed by PostgreSQL. Connect multiple products to one instance, follow what people do, and use conversion and retention data to decide what to improve. The dashboard and browser SDK are embedded into a single Go binary.
 
@@ -14,17 +14,19 @@ make run
 
 `make db` creates a private `.env` with random credentials if one does not already exist, starts a loopback-only PostgreSQL instance on port 55433, and creates database `product_analytics`. It finds PostgreSQL tools on PATH or the installed Homebrew PostgreSQL 17 location. Data lives in **`.postgres/`**; this directory and `.env` are ignored by Git. `make db-stop` stops this project's cluster. Start it again with `make db`; existing data is retained. Do not run the native database and the Docker database on the same port. The native helper is for local development and initializes a local superuser; use a dedicated least-privilege role for hosted deployments.
 
-Open **http://127.0.0.1:8080** and sign in with `PRODUCT_ANALYTICS_ADMIN_TOKEN` from `.env`. On an empty database, the welcome page walks you through signing in, creating a project, and connecting tracking. Existing projects skip the welcome page, including after restarts and across browsers.
+Open **http://127.0.0.1:8080** and sign in with `PULSE_ADMIN_TOKEN` from `.env`. On an empty database, the welcome page walks you through signing in, creating a project, and connecting tracking. Existing projects skip the welcome page, including after restarts and across browsers.
 
 `make run`, `make demo`, and `make migrate` load `.env` through `scripts/run.sh`. A directly launched Go binary reads environment variables, not dotenv files:
 
 ```sh
 export DATABASE_URL='postgres://product_analytics:YOUR_PASSWORD@127.0.0.1:55433/product_analytics?sslmode=disable'
-export PRODUCT_ANALYTICS_ADMIN_TOKEN='YOUR_LONG_RANDOM_ADMIN_TOKEN'
-go run ./cmd/product-analytics
+export PULSE_ADMIN_TOKEN='YOUR_LONG_RANDOM_ADMIN_TOKEN'
+go run ./cmd/pulse
 ```
 
-`DATABASE_URL` and `PRODUCT_ANALYTICS_ADMIN_TOKEN` are required. There is no file-storage fallback. The previous `--data` option has been removed. The HTTP service refuses to start without an explicit administrator token and never prints a generated administrator credential to logs.
+`DATABASE_URL` and `PULSE_ADMIN_TOKEN` are required. There is no file-storage fallback. The previous `--data` option has been removed. The HTTP service refuses to start without an explicit administrator token and never prints a generated administrator credential to logs.
+
+Existing installations may continue using the former `PRODUCT_ANALYTICS_*` server variables while migrating; `PULSE_*` variables take precedence when both are set.
 
 Use `make demo` to seed 60 days of sample activity **only when there are no projects**. Do not seed a database that you plan to import existing data into.
 
@@ -38,7 +40,7 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-Compose starts PostgreSQL and product-analytics, waits for database readiness, and persists PostgreSQL data in the **`product_analytics_postgres` named volume** (Compose adds its project-name prefix). Both published ports bind to localhost. The app connects to the `db` service over the Compose network. `docker compose down` preserves the volume; deleting the volume deletes its database. The Compose runtime requires a running Docker daemon.
+Compose starts PostgreSQL and Pulse, waits for database readiness, and persists PostgreSQL data in the **`product_analytics_postgres` named volume** (Compose adds its project-name prefix). Both published ports bind to localhost. The app connects to the `db` service over the Compose network. `docker compose down` preserves the volume; deleting the volume deletes its database. The Compose runtime requires a running Docker daemon.
 
 To run Go on the host with a Docker database instead:
 
@@ -47,11 +49,11 @@ docker compose up -d db
 make run
 ```
 
-Do not use an existing `.env` with placeholder credentials outside local development. Secure cookies default to true; set `PRODUCT_ANALYTICS_SECURE_COOKIES=false` only for direct loopback development. When false, administrator login and authenticated API access require both a loopback peer connection and a loopback request host. For remote access, put a TLS reverse proxy in front of product-analytics, preserve the original Host header, and keep secure cookies enabled. Use verified TLS for a remote PostgreSQL connection; `sslmode=disable` in the examples is for local development.
+Do not use an existing `.env` with placeholder credentials outside local development. Secure cookies default to true; set `PULSE_SECURE_COOKIES=false` only for direct loopback development. When false, administrator login and authenticated API access require both a loopback peer connection and a loopback request host. For remote access, put a TLS reverse proxy in front of Pulse, preserve the original Host header, and keep secure cookies enabled. Use verified TLS for a remote PostgreSQL connection; `sslmode=disable` in the examples is for local development.
 
 ## Self-Hosting and Production Deployment
 
-The service compiles down to a single binary with all dashboard assets and the client SDK embedded. For public or remote deployments, place product-analytics behind a **TLS reverse proxy** (e.g., Caddy or Nginx) and use verified TLS for PostgreSQL.
+The service compiles down to a single binary with all dashboard assets and the client SDK embedded. For public or remote deployments, place Pulse behind a **TLS reverse proxy** (e.g., Caddy or Nginx) and use verified TLS for PostgreSQL.
 
 ### 1. Production Docker Compose
 
@@ -62,16 +64,16 @@ The service compiles down to a single binary with all dashboard assets and the c
 
    cat <<EOF > .env
    POSTGRES_PASSWORD=${DB_PASSWORD}
-   PRODUCT_ANALYTICS_ADMIN_TOKEN=${ADMIN_TOKEN}
+   PULSE_ADMIN_TOKEN=${ADMIN_TOKEN}
    POSTGRES_PORT=55433
-   PRODUCT_ANALYTICS_PORT=8080
-   PRODUCT_ANALYTICS_SECURE_COOKIES=true
-   PRODUCT_ANALYTICS_MAX_EVENTS_PER_PROJECT=1000000
-   PRODUCT_ANALYTICS_MAX_QUERY_EVENTS=100000
+   PULSE_PORT=8080
+   PULSE_SECURE_COOKIES=true
+   PULSE_MAX_EVENTS_PER_PROJECT=1000000
+   PULSE_MAX_QUERY_EVENTS=100000
    DATABASE_URL=postgres://product_analytics:${DB_PASSWORD}@db:5432/product_analytics?sslmode=disable
    EOF
    ```
-   > **Note:** Store `PRODUCT_ANALYTICS_ADMIN_TOKEN` securely in your password manager. It is required to log in to the dashboard.
+   > **Note:** Store `PULSE_ADMIN_TOKEN` securely in your password manager. It is required to log in to the dashboard.
 
 2. **Start the containers:**
    ```sh
@@ -86,26 +88,26 @@ To run the binary directly on a Linux VPS (Ubuntu/Debian) or with a managed Post
 1. **Build the binary and create a dedicated system user:**
    ```sh
    make build
-   sudo mv bin/product-analytics /usr/local/bin/
-   sudo useradd -r -s /bin/false productanalytics
+   sudo mv bin/pulse /usr/local/bin/
+   sudo useradd -r -s /bin/false pulse
    ```
 
-2. **Create the systemd service file** at `/etc/systemd/system/product-analytics.service`:
+2. **Create the systemd service file** at `/etc/systemd/system/pulse.service`:
    ```ini
    [Unit]
-   Description=Product Analytics Service
+   Description=Pulse Analytics Service
    After=network.target postgresql.service
 
    [Service]
    Type=simple
-   User=productanalytics
-   Group=productanalytics
+   User=pulse
+   Group=pulse
    Environment="DATABASE_URL=postgres://product_analytics:YOUR_PASSWORD@127.0.0.1:5432/product_analytics?sslmode=verify-full"
-   Environment="PRODUCT_ANALYTICS_ADMIN_TOKEN=YOUR_ADMIN_TOKEN"
-   Environment="PRODUCT_ANALYTICS_SECURE_COOKIES=true"
-   Environment="PRODUCT_ANALYTICS_MAX_EVENTS_PER_PROJECT=1000000"
-   Environment="PRODUCT_ANALYTICS_MAX_QUERY_EVENTS=100000"
-   ExecStart=/usr/local/bin/product-analytics --addr 127.0.0.1:8080
+   Environment="PULSE_ADMIN_TOKEN=YOUR_ADMIN_TOKEN"
+   Environment="PULSE_SECURE_COOKIES=true"
+   Environment="PULSE_MAX_EVENTS_PER_PROJECT=1000000"
+   Environment="PULSE_MAX_QUERY_EVENTS=100000"
+   ExecStart=/usr/local/bin/pulse --addr 127.0.0.1:8080
    Restart=always
    RestartSec=5s
    NoNewPrivileges=true
@@ -119,7 +121,7 @@ To run the binary directly on a Linux VPS (Ubuntu/Debian) or with a managed Post
 3. **Enable and start the service:**
    ```sh
    sudo systemctl daemon-reload
-   sudo systemctl enable --now product-analytics
+   sudo systemctl enable --now pulse
    ```
 
 ### 3. Reverse Proxy Configuration
@@ -157,10 +159,10 @@ server {
 | Environment Variable | Default | Purpose |
 | --- | --- | --- |
 | `DATABASE_URL` | *Required* | PostgreSQL connection string (`postgres://user:pass@host:port/db?sslmode=...`). |
-| `PRODUCT_ANALYTICS_ADMIN_TOKEN` | *Required* | Bearer token for administrator authentication and dashboard access. |
-| `PRODUCT_ANALYTICS_SECURE_COOKIES` | `true` | Enforces `Secure` flag on cookies. Set `false` only on loopback development. |
-| `PRODUCT_ANALYTICS_MAX_EVENTS_PER_PROJECT` | `1000000` | Maximum stored events per project before rejecting writes with HTTP 429. |
-| `PRODUCT_ANALYTICS_MAX_QUERY_EVENTS` | `100000` | Upper limit on events loaded into memory per query (returns HTTP 413 if exceeded). |
+| `PULSE_ADMIN_TOKEN` | *Required* | Bearer token for administrator authentication and dashboard access. |
+| `PULSE_SECURE_COOKIES` | `true` | Enforces `Secure` flag on cookies. Set `false` only on loopback development. |
+| `PULSE_MAX_EVENTS_PER_PROJECT` | `1000000` | Maximum stored events per project before rejecting writes with HTTP 429. |
+| `PULSE_MAX_QUERY_EVENTS` | `100000` | Upper limit on events loaded into memory per query (returns HTTP 413 if exceeded). |
 
 ### 5. Production Operations
 
@@ -174,7 +176,7 @@ server {
 
 ## Database
 
-On startup, product-analytics automatically applies embedded SQL migrations from `internal/analytics/migrations/`. Migrations run in a transaction under a PostgreSQL advisory lock, so concurrent app startups do not apply the same migration twice. `make migrate` applies migrations without starting HTTP.
+On startup, Pulse automatically applies embedded SQL migrations from `internal/analytics/migrations/`. Migrations run in a transaction under a PostgreSQL advisory lock, so concurrent app startups do not apply the same migration twice. `make migrate` applies migrations without starting HTTP.
 
 | Table | Stored data |
 | --- | --- |
@@ -195,7 +197,7 @@ SELECT version, applied_at FROM schema_migrations ORDER BY version;
 
 Back up PostgreSQL with your normal database backup tooling, such as `pg_dump`. The environment file contains credentials, not event data. Analytics calculations load selected events into Go, and retention reads prior event history, but each query is capped at 100,000 events by default to bound process memory. For larger volumes, move aggregation and retention computation into SQL or an analytics database and add pagination. Automatic expiry, deletion, and compaction policies are not implemented.
 
-Capacity controls are configured with `PRODUCT_ANALYTICS_MAX_EVENTS_PER_PROJECT` and `PRODUCT_ANALYTICS_MAX_QUERY_EVENTS`. Both must be positive integers. Increase them only with matching PostgreSQL storage, process memory, ingress budgets, monitoring, and recovery capacity. The storage quota is enforced transactionally across concurrent app instances; requests beyond it return HTTP 429. Analytics queries beyond the in-memory limit return HTTP 413 and should be narrowed.
+Capacity controls are configured with `PULSE_MAX_EVENTS_PER_PROJECT` and `PULSE_MAX_QUERY_EVENTS`. Both must be positive integers. Increase them only with matching PostgreSQL storage, process memory, ingress budgets, monitoring, and recovery capacity. The storage quota is enforced transactionally across concurrent app instances; requests beyond it return HTTP 429. Analytics queries beyond the in-memory limit return HTTP 413 and should be narrowed.
 
 ## Import your existing JSONL data
 
@@ -231,13 +233,13 @@ Create a project and allow exact origins, such as `https://app.example.com` and 
 ```html
 <script src="https://analytics.example.com/sdk.js"></script>
 <script>
-  productAnalytics.init('pk_YOUR_PROJECT_KEY', { host: 'https://analytics.example.com' });
-  productAnalytics.identify('user_123', { plan: 'Pro' });
-  productAnalytics.capture('project_created', { source: 'onboarding' });
+  pulse.init('pk_YOUR_PROJECT_KEY', { host: 'https://analytics.example.com' });
+  pulse.identify('user_123', { plan: 'Pro' });
+  pulse.capture('project_created', { source: 'onboarding' });
 </script>
 ```
 
-The SDK tracks the initial page view; call `productAnalytics.page()` after SPA navigation. It buffers events and flushes every 5 seconds or at 20 events. It uses local storage for the distinct ID, session storage for sessions (30-minute inactivity window), and no cookies. It retries network/server failures in memory, bounds the queue at 500, and attempts a beacon on page exit. Delivery is best effort. It respects Do Not Track by default. `productAnalytics.optOut()` clears the queue and disables collection; `productAnalytics.optIn()` reenables it. Call `productAnalytics.reset()` on logout. Configure your product's CSP to allow scripts and connections to your analytics host.
+The SDK tracks the initial page view; call `pulse.page()` after SPA navigation. It buffers events and flushes every 5 seconds or at 20 events. It uses local storage for the distinct ID, session storage for sessions (30-minute inactivity window), and no cookies. It retries network/server failures in memory, bounds the queue at 500, and attempts a beacon on page exit. Delivery is best effort. It respects Do Not Track by default. `pulse.optOut()` clears the queue and disables collection; `pulse.optIn()` reenables it. Call `pulse.reset()` on logout. Configure your product's CSP to allow scripts and connections to your analytics host.
 
 `identify` changes the identity for future events and emits `$identify`; it does not retroactively merge anonymous activity. People properties reflect their most recent event. Do not send sensitive data you do not need. Public ingestion keys are write-only, not secrets or proof of a trusted sender. The administrator token grants access to all projects on the instance.
 
@@ -262,12 +264,12 @@ curl http://127.0.0.1:8080/capture \
 
 Returns HTTP 202 with `{"accepted":1}`. Repeating the same ID for the same project returns `{"accepted":0}`. Missing IDs and timestamps are generated by the server. Use RFC 3339 timestamps for historical events. Backend clients omit `Origin`; browser origins must match the allowlist. Set rate limits and an ingestion budget at the reverse proxy before accepting public traffic.
 
-The [Go client](sdk/go/client.go) supports contexts, batches, a 10-second timeout, and stable IDs. It does not retry automatically; reuse an event ID on application retries. The module is named `product-analytics` locally; change `go.mod` and imports to your real repository path before distributing it across repositories.
+The [Go client](sdk/go/client.go) supports contexts, batches, a 10-second timeout, and stable IDs. It does not retry automatically; reuse an event ID on application retries. The module is named `pulse` locally; change `go.mod` and imports to your real repository path before distributing it across repositories.
 
 ```go
-client, err := productanalytics.New("https://analytics.example.com", "pk_YOUR_KEY")
+client, err := pulse.New("https://analytics.example.com", "pk_YOUR_KEY")
 if err != nil { return err }
-err = client.Capture(ctx, productanalytics.Event{
+err = client.Capture(ctx, pulse.Event{
     ID: "order-123-paid", Name: "subscription_started", DistinctID: "user_123",
     Properties: map[string]any{"plan": "Pro"},
 })
@@ -275,7 +277,7 @@ err = client.Capture(ctx, productanalytics.Event{
 
 ## API
 
-Administrator endpoints require `Authorization: Bearer <PRODUCT_ANALYTICS_ADMIN_TOKEN>` or a dashboard session cookie. Query endpoints take `project=<id>` and optionally `from=YYYY-MM-DD&to=YYYY-MM-DD`. End dates are inclusive, today is partial, and ranges are limited to 366 days. All analytics day boundaries are UTC.
+Administrator endpoints require `Authorization: Bearer <PULSE_ADMIN_TOKEN>` or a dashboard session cookie. Query endpoints take `project=<id>` and optionally `from=YYYY-MM-DD&to=YYYY-MM-DD`. End dates are inclusive, today is partial, and ranges are limited to 366 days. All analytics day boundaries are UTC.
 
 | Method | Route | Purpose |
 | --- | --- | --- |

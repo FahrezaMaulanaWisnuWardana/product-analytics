@@ -1,4 +1,4 @@
-package productanalytics
+package pulse
 
 import (
 	"context"

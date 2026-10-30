@@ -25,4 +25,4 @@ integration-test:
 
 build:
 	mkdir -p bin
-	go build -trimpath -o bin/product-analytics ./cmd/product-analytics
+	go build -trimpath -o bin/pulse ./cmd/pulse
