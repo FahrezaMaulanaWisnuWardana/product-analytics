@@ -69,7 +69,15 @@ func TestInsecureAdminAccessIsLoopbackOnly(t *testing.T) {
 	if w := request(h, "POST", "/api/login", `{"token":"test-admin"}`, "", ""); w.Code != http.StatusForbidden {
 		t.Fatal("remote-style insecure login accepted", w.Code)
 	}
+	spoofed := httptest.NewRequest("POST", "http://localhost/api/login", strings.NewReader(`{"token":"test-admin"}`))
+	spoofed.RemoteAddr = "203.0.113.10:4567"
+	spoofedResponse := httptest.NewRecorder()
+	h.ServeHTTP(spoofedResponse, spoofed)
+	if spoofedResponse.Code != http.StatusForbidden {
+		t.Fatal("spoofed loopback Host accepted from remote peer", spoofedResponse.Code)
+	}
 	r := httptest.NewRequest("POST", "http://127.0.0.1/api/login", strings.NewReader(`{"token":"test-admin"}`))
+	r.RemoteAddr = "127.0.0.1:4567"
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
 	if w.Code != http.StatusOK {

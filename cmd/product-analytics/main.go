@@ -69,6 +69,14 @@ func main() {
 		log.Print("Database migrations are up to date")
 		return
 	}
+	token := os.Getenv("PRODUCT_ANALYTICS_ADMIN_TOKEN")
+	if token == "" {
+		log.Fatal("PRODUCT_ANALYTICS_ADMIN_TOKEN is required; generate a long random value and keep it out of logs")
+	}
+	secure, err := boolEnv("PRODUCT_ANALYTICS_SECURE_COOKIES", true)
+	if err != nil {
+		log.Fatal(err)
+	}
 	hasProjects, err := store.HasProjects()
 	if err != nil {
 		log.Fatal(err)
@@ -77,14 +85,6 @@ func main() {
 		if err = seed(store); err != nil {
 			log.Fatal(err)
 		}
-	}
-	token := os.Getenv("PRODUCT_ANALYTICS_ADMIN_TOKEN")
-	if token == "" {
-		log.Fatal("PRODUCT_ANALYTICS_ADMIN_TOKEN is required; generate a long random value and keep it out of logs")
-	}
-	secure, err := boolEnv("PRODUCT_ANALYTICS_SECURE_COOKIES", true)
-	if err != nil {
-		log.Fatal(err)
 	}
 	s := &server{store: store, token: token, secure: secure}
 	httpServer := &http.Server{Addr: *addr, Handler: s.routes(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 * 1024}
@@ -177,8 +177,8 @@ func (s *server) valid(token string) bool {
 }
 func (s *server) auth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !s.secure && !loopbackHost(r.Host) {
-			fail(w, http.StatusForbidden, "Insecure administrator access is allowed only on loopback. Enable secure cookies behind HTTPS.")
+		if !s.secure && !loopbackRequest(r) {
+			fail(w, http.StatusForbidden, "Insecure administrator access requires a loopback connection and host. Enable secure cookies behind HTTPS.")
 			return
 		}
 		token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
@@ -201,8 +201,8 @@ func sameOrigin(r *http.Request) bool {
 	return err == nil && u.Host == r.Host
 }
 func (s *server) login(w http.ResponseWriter, r *http.Request) {
-	if !s.secure && !loopbackHost(r.Host) {
-		fail(w, http.StatusForbidden, "Insecure administrator login is allowed only on loopback. Enable secure cookies behind HTTPS.")
+	if !s.secure && !loopbackRequest(r) {
+		fail(w, http.StatusForbidden, "Insecure administrator login requires a loopback connection and host. Enable secure cookies behind HTTPS.")
 		return
 	}
 	if r.Header.Get("Origin") != "" && !sameOrigin(r) {
@@ -234,6 +234,9 @@ func loopbackHost(hostport string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
+}
+func loopbackRequest(r *http.Request) bool {
+	return loopbackHost(r.Host) && loopbackHost(r.RemoteAddr)
 }
 func positiveEnvInt(name string, fallback int) (int, error) {
 	raw := strings.TrimSpace(os.Getenv(name))

@@ -252,17 +252,13 @@ func insertEvents(ctx context.Context, tx *sql.Tx, events []Event, maxEventsPerP
 		}
 		return ordered[i].ProjectID < ordered[j].ProjectID
 	})
-	current := map[string]int{}
+	current := map[string]int64{}
 	for _, e := range ordered {
 		if _, seen := current[e.ProjectID]; seen {
 			continue
 		}
-		var projectID string
-		if err := tx.QueryRowContext(ctx, "SELECT id FROM projects WHERE id=$1 FOR UPDATE", e.ProjectID).Scan(&projectID); err != nil {
-			return 0, err
-		}
-		var eventCount int
-		if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM events WHERE project_id=$1", e.ProjectID).Scan(&eventCount); err != nil {
+		var eventCount int64
+		if err := tx.QueryRowContext(ctx, "SELECT event_count FROM projects WHERE id=$1 FOR UPDATE", e.ProjectID).Scan(&eventCount); err != nil {
 			return 0, err
 		}
 		current[e.ProjectID] = eventCount
@@ -292,9 +288,14 @@ func insertEvents(ctx context.Context, tx *sql.Tx, events []Event, maxEventsPerP
 		}
 		added := int(n)
 		count += added
-		current[e.ProjectID] += added
-		if current[e.ProjectID] > maxEventsPerProject {
+		current[e.ProjectID] += int64(added)
+		if current[e.ProjectID] > int64(maxEventsPerProject) {
 			return 0, fmt.Errorf("%w: project %s exceeds %d events", ErrEventQuota, e.ProjectID, maxEventsPerProject)
+		}
+	}
+	for projectID, eventCount := range current {
+		if _, err := tx.ExecContext(ctx, "UPDATE projects SET event_count=$2 WHERE id=$1", projectID, eventCount); err != nil {
+			return 0, err
 		}
 	}
 	return count, nil

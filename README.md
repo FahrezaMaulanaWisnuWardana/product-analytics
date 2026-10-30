@@ -47,7 +47,7 @@ docker compose up -d db
 make run
 ```
 
-Do not use an existing `.env` with placeholder credentials outside local development. Secure cookies default to true; set `PRODUCT_ANALYTICS_SECURE_COOKIES=false` only for direct loopback development. When false, administrator login and authenticated API access are rejected for non-loopback request hosts. For remote access, put a TLS reverse proxy in front of product-analytics, preserve the original Host header, and keep secure cookies enabled. Use verified TLS for a remote PostgreSQL connection; `sslmode=disable` in the examples is for local development.
+Do not use an existing `.env` with placeholder credentials outside local development. Secure cookies default to true; set `PRODUCT_ANALYTICS_SECURE_COOKIES=false` only for direct loopback development. When false, administrator login and authenticated API access require both a loopback peer connection and a loopback request host. For remote access, put a TLS reverse proxy in front of product-analytics, preserve the original Host header, and keep secure cookies enabled. Use verified TLS for a remote PostgreSQL connection; `sslmode=disable` in the examples is for local development.
 
 ## Self-Hosting and Production Deployment
 
@@ -178,11 +178,11 @@ On startup, product-analytics automatically applies embedded SQL migrations from
 
 | Table | Stored data |
 | --- | --- |
-| `projects` | Project IDs, names, public ingestion keys, allowed origins (`jsonb`), creation time |
+| `projects` | Project IDs, names, public ingestion keys, allowed origins (`jsonb`), creation time, stored-event count |
 | `events` | Project, event ID/name, person/session IDs, timestamp, properties (`jsonb`) |
 | `schema_migrations` | Applied migration versions and timestamps |
 
-The primary key `(project_id, id)` deduplicates events per product, across restarts and concurrent app instances. Foreign keys prevent orphan events. Indexes cover project/time, person/time, and event-name/time. Event batches commit atomically. A transactionally enforced per-project quota defaults to 1,000,000 stored events and serializes concurrent writers across app instances. Every analytics read comes from PostgreSQL, so one app instance can immediately read events written by another.
+The primary key `(project_id, id)` deduplicates events per product, across restarts and concurrent app instances. Foreign keys prevent orphan events. Indexes cover project/time, person/time, and event-name/time. Event batches and their project counters commit atomically. A transactionally enforced per-project quota defaults to 1,000,000 stored events and serializes concurrent writers across app instances. Every analytics read comes from PostgreSQL, so one app instance can immediately read events written by another.
 
 Open database `product_analytics` in a PostgreSQL client using the connection information in `.env`, or inspect it with `psql`. For example:
 
