@@ -118,41 +118,41 @@
         <span class="project-avatar">A</span>
         <span>
           <strong id="project-name">Your workspace</strong>
-          <small>Project workspace</small>
+          <small data-i18n="project_workspace">Project workspace</small>
         </span>
         <span class="chevrons">⌃<br>⌄</span>
       </button>
 
       <div id="project-menu" class="project-menu" hidden></div>
 
-      <div class="nav-label">WORKSPACE</div>
+      <div class="nav-label" data-i18n="workspace">WORKSPACE</div>
       <nav>
-        <a href="#overview" data-view="overview"><span data-icon="overview"></span> Overview <i></i></a>
-        <a href="#events" data-view="events"><span data-icon="events"></span> Events <span class="live-dot"></span></a>
-        <a href="#funnels" data-view="funnels"><span data-icon="funnels"></span> Funnels</a>
-        <a href="#retention" data-view="retention"><span data-icon="retention"></span> Retention</a>
-        <a href="#people" data-view="people"><span data-icon="people"></span> People</a>
+        <a href="#overview" data-view="overview"><span data-icon="overview"></span> <span data-i18n="nav_overview">Overview</span> <i></i></a>
+        <a href="#events" data-view="events"><span data-icon="events"></span> <span data-i18n="nav_events">Events</span> <span class="live-dot"></span></a>
+        <a href="#funnels" data-view="funnels"><span data-icon="funnels"></span> <span data-i18n="nav_funnels">Funnels</span></a>
+        <a href="#retention" data-view="retention"><span data-icon="retention"></span> <span data-i18n="nav_retention">Retention</span></a>
+        <a href="#people" data-view="people"><span data-icon="people"></span> <span data-i18n="nav_people">People</span></a>
       </nav>
 
-      <div class="nav-label build-label">BUILD WITH PULSE</div>
+      <div class="nav-label build-label" data-i18n="build_with">BUILD WITH PULSE</div>
       <nav>
-        <a href="#setup" data-view="setup"><span data-icon="code"></span> Set up tracking <span class="tiny-arrow">↗</span></a>
-        <a href="#settings" data-view="settings"><span data-icon="settings"></span> Project settings</a>
+        <a href="#setup" data-view="setup"><span data-icon="code"></span> <span data-i18n="nav_setup">Set up tracking</span> <span class="tiny-arrow">↗</span></a>
+        <a href="#settings" data-view="settings"><span data-icon="settings"></span> <span data-i18n="nav_settings">Project settings</span></a>
       </nav>
 
       <div class="sidebar-bottom">
         <div class="signal-card">
           <span class="signal-icon">✧</span>
-          <strong>Small signals. Big moves.</strong>
-          <p>Your next good decision starts with a little curiosity.</p>
-          <a href="#events">Explore your events <span>→</span></a>
+          <strong data-i18n="signal_title">Small signals. Big moves.</strong>
+          <p data-i18n="signal_text">Your next good decision starts with a little curiosity.</p>
+          <a href="#events"><span data-i18n="explore_events">Explore your events</span> <span>→</span></a>
         </div>
 
         <button id="account" class="account">
           <span class="account-avatar">Y</span>
           <span>
             <strong>Your workspace</strong>
-            <small>Administrator</small>
+            <small data-i18n="administrator">Administrator</small>
           </span>
           <span data-icon="logout"></span>
         </button>
@@ -165,13 +165,20 @@
       <header class="topbar">
         <div class="breadcrumbs">
           <span data-icon="grid"></span>
-          <span>Workspace</span>
+          <span data-i18n="workspace_title">Workspace</span>
           <span class="slash">/</span>
           <strong id="crumb">Overview</strong>
         </div>
 
         <div class="topbar-right">
-          <span class="service-status"><i></i> Service connected</span>
+          <span class="service-status"><i></i> <span data-i18n="service_connected">Service connected</span></span>
+          <label class="language-control" for="language">
+            <span data-i18n="language">Language</span>
+            <select id="language" aria-label="Language">
+              <option value="en">English</option>
+              <option value="id">Indonesia</option>
+            </select>
+          </label>
           <button class="icon-button" id="help" aria-label="Tracking guide" title="Tracking guide">
             <span data-icon="help"></span>
           </button>
@@ -188,8 +195,8 @@
             <p id="page-subtitle">See what’s happening. Understand what’s working.</p>
           </div>
           <div class="heading-actions">
-            <button id="refresh" class="button"><span data-icon="refresh"></span> Refresh</button>
-            <button id="new-project" class="button primary"><span data-icon="plus"></span> New project</button>
+            <button id="refresh" class="button"><span data-icon="refresh"></span> <span data-i18n="refresh">Refresh</span></button>
+            <button id="new-project" class="button primary"><span data-icon="plus"></span> <span data-i18n="new_project">New project</span></button>
           </div>
         </div>
 
@@ -198,14 +205,14 @@
           <div class="toolbar-left">
             <span class="project-chip"><i></i><span id="chip-name">Acme Web</span></span>
             <span class="toolbar-divider"></span>
-            <span class="muted small">All users</span>
+            <span class="muted small" data-i18n="all_users">All users</span>
           </div>
           <div class="toolbar-right">
             <span data-icon="calendar"></span>
             <select id="date-range" aria-label="Date range">
-              <option value="7">Last 7 days</option>
-              <option value="30" selected>Last 30 days</option>
-              <option value="90">Last 90 days</option>
+              <option value="7" data-i18n="last_7">Last 7 days</option>
+              <option value="30" selected data-i18n="last_30">Last 30 days</option>
+              <option value="90" data-i18n="last_90">Last 90 days</option>
             </select>
             <span class="utc">UTC</span>
           </div>
@@ -216,8 +223,8 @@
 
         <!-- Footer -->
         <footer>
-          <span><span class="footer-logo">ϟ</span> A little clarity goes a long way.</span>
-          <span id="updated">Live from your product</span>
+          <span><span class="footer-logo">ϟ</span> <span data-i18n="footer_clarity">A little clarity goes a long way.</span></span>
+          <span id="updated" data-i18n="live_product">Live from your product</span>
         </footer>
       </main>
     </div>

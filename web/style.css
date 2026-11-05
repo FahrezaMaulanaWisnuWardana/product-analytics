@@ -403,6 +403,26 @@ button:focus-visible, a:focus-visible, select:focus-visible {
   background: #5a9d73;
 }
 
+.language-control {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 10px;
+  color: #7c877f;
+}
+
+.language-control select {
+  width: auto;
+  min-width: 86px;
+  padding: 6px 25px 6px 9px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background-color: #fff;
+  color: #48534c;
+  font: inherit;
+  cursor: pointer;
+}
+
 .icon-button {
   border: 0;
   background: transparent;
@@ -1869,6 +1889,15 @@ dialog .wide {
 
   .topbar-right {
     gap: 12px;
+  }
+
+  .language-control > span,
+  .service-status {
+    display: none;
+  }
+
+  .language-control select {
+    min-width: 78px;
   }
 
   .chart-wrap {
