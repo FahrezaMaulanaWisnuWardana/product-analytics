@@ -590,6 +590,117 @@ select {
 }
 
 
+/* Decision support */
+.decision-panel {
+  background: linear-gradient(135deg,#f2f8f3 0%,#fff 70%);
+  border: 1px solid #dce9de;
+  border-radius: 10px;
+  padding: 24px;
+  margin-bottom: 20px;
+}
+
+.decision-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.decision-heading .eyebrow {
+  color: #5f886d;
+  margin-bottom: 8px;
+}
+
+.decision-heading h2 {
+  max-width: 760px;
+  margin: 0;
+  font-size: 21px;
+  line-height: 1.35;
+  font-weight: 620;
+  letter-spacing: -.35px;
+}
+
+.readiness {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border-radius: 999px;
+  padding: 7px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.readiness i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.readiness.orange { color:#9a633c;background:#fff1e6; }
+.readiness.blue { color:#416f86;background:#eaf4f8; }
+.readiness.green { color:#347354;background:#e9f5ec; }
+
+.decision-signals {
+  display: grid;
+  grid-template-columns: repeat(4,1fr);
+  margin-top: 21px;
+  border: 1px solid #e2ebe3;
+  border-radius: 8px;
+  background: #ffffffc7;
+}
+
+.decision-signals>div {
+  padding: 13px 15px;
+  border-right: 1px solid #e2ebe3;
+}
+
+.decision-signals>div:last-child { border-right: 0; }
+.decision-signals span,.decision-label { display:block;color:#718078;font-size:11px; }
+.decision-signals strong { display:block;margin-top:5px;font-size:14px;font-weight:600;color:#2e3c35; }
+
+.decision-body {
+  display: grid;
+  grid-template-columns: minmax(0,1.25fr) minmax(280px,.75fr);
+  gap: 28px;
+  margin-top: 22px;
+}
+
+.decision-body p {
+  margin: 7px 0 0;
+  color: #4f6056;
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.decision-evidence {
+  padding-left: 11px;
+  border-left: 3px solid #e3a06e;
+  color: #785c49 !important;
+}
+
+.decision-next {
+  border-left: 1px solid #dfe9e1;
+  padding-left: 27px;
+}
+
+.decision-next .button { margin-top: 13px; font-size: 11px; }
+
+.event-drilldown {
+  display: inline-flex;
+  align-items: center;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  font: inherit;
+  text-align: left;
+}
+
+.event-drilldown:hover { color: var(--green); }
+
+
 /* ==========================================================================
    7. Stats Cards & Sparklines
    ========================================================================== */
@@ -1722,6 +1833,14 @@ dialog .wide {
   .stat-grid {
     grid-template-columns: repeat(2,1fr);
   }
+
+  .decision-panel { padding: 18px; }
+  .decision-heading,.decision-body { display: block; }
+  .readiness { margin-top: 14px; }
+  .decision-signals { grid-template-columns: repeat(2,1fr); }
+  .decision-signals>div:nth-child(2) { border-right: 0; }
+  .decision-signals>div:nth-child(-n+2) { border-bottom: 1px solid #e2ebe3; }
+  .decision-next { border-left: 0; border-top: 1px solid #dfe9e1; padding: 18px 0 0; margin-top: 18px; }
 
   .stat-card {
     min-height: 130px;

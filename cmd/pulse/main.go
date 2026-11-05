@@ -439,7 +439,7 @@ func (s *server) api(w http.ResponseWriter, r *http.Request) {
 		if len(recent) > 8 {
 			recent = recent[:8]
 		}
-		respond(w, 200, map[string]any{"metrics": analytics.Measure(events), "previous": analytics.Measure(previous), "series": analytics.Series(events, from, to), "top_events": analytics.Breakdown(events, ""), "pages": analytics.Breakdown(filterEvents(events, "$pageview"), "$pathname"), "browsers": analytics.Breakdown(events, "$browser"), "recent": recent, "from": from, "to": to})
+		respond(w, 200, map[string]any{"metrics": analytics.Measure(events), "previous": analytics.Measure(previous), "decision": analytics.Decision(events), "series": analytics.Series(events, from, to), "top_events": analytics.Breakdown(events, ""), "pages": analytics.Breakdown(filterEvents(events, "$pageview"), "$pathname"), "browsers": analytics.Breakdown(events, "$browser"), "recent": recent, "from": from, "to": to})
 	case "/api/events":
 		name := r.URL.Query().Get("event")
 		person := r.URL.Query().Get("person")

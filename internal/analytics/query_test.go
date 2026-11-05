@@ -92,6 +92,37 @@ func TestMeasureAndSeries(t *testing.T) {
 		t.Fatalf("series: %+v", series)
 	}
 }
+
+func TestDecisionContextReadinessAndConcentration(t *testing.T) {
+	start := at("2026-10-01T00:00:00Z")
+	events := []Event{
+		{Name: "detail_viewed", DistinctID: "a", Timestamp: start},
+		{Name: "detail_viewed", DistinctID: "a", Timestamp: start.Add(time.Minute)},
+		{Name: "detail_viewed", DistinctID: "b", Timestamp: start.Add(2 * time.Minute)},
+		{Name: "signed_up", DistinctID: "c", Timestamp: start.Add(3 * time.Minute)},
+	}
+	d := Decision(events)
+	if d.Readiness != "collecting" || d.ActiveDays != 1 {
+		t.Fatalf("readiness: %+v", d)
+	}
+	if d.TopEvent.Name != "detail_viewed" || d.TopEvent.Count != 3 || d.TopEvent.Users != 2 || d.TopEventShare != 75 {
+		t.Fatalf("top event: %+v", d)
+	}
+	if d.TopPersonEvents != 2 || d.TopPersonShare != 50 {
+		t.Fatalf("person concentration: %+v", d)
+	}
+}
+
+func TestDecisionContextReadySample(t *testing.T) {
+	start := at("2026-10-01T00:00:00Z")
+	events := make([]Event, 0, 30)
+	for i := 0; i < 30; i++ {
+		events = append(events, Event{Name: "active", DistinctID: fmt.Sprintf("user-%d", i), Timestamp: start.AddDate(0, 0, i%7)})
+	}
+	if d := Decision(events); d.Readiness != "ready" || d.ActiveDays != 7 {
+		t.Fatalf("expected ready sample: %+v", d)
+	}
+}
 func TestStorePersistenceIsolationAndProjectUpdate(t *testing.T) {
 	dir := testdb.URL(t)
 	s, err := Open(dir)

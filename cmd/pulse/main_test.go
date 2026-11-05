@@ -120,13 +120,17 @@ func TestCaptureValidationCORSIsolationAndDedup(t *testing.T) {
 	}
 	w = request(h, "GET", "/api/overview?project="+other.ID, "", "", "test-admin")
 	var response struct {
-		Metrics analytics.Metrics `json:"metrics"`
+		Metrics  analytics.Metrics         `json:"metrics"`
+		Decision analytics.DecisionContext `json:"decision"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
 	if response.Metrics.Events != 1 {
 		t.Fatal("project isolation failed", w.Body.String())
+	}
+	if response.Decision.Readiness != "collecting" || response.Decision.ActiveDays != 1 || response.Decision.TopEvent.Name != "signed_up" {
+		t.Fatal("decision context missing from overview", w.Body.String())
 	}
 	if w := request(h, "POST", "/capture", `{"api_key":"wrong","events":[]}`, "", ""); w.Code != 401 {
 		t.Fatal("invalid ingestion key accepted")

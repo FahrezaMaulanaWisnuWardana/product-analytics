@@ -24,6 +24,20 @@ type Metrics struct {
 	Pageviews int `json:"pageviews"`
 }
 
+// DecisionContext describes whether the selected sample is broad enough for
+// product decisions and where activity is concentrated. Readiness is a
+// deliberately conservative heuristic, not a statistical significance test.
+type DecisionContext struct {
+	Readiness       string  `json:"readiness"`
+	ActiveDays      int     `json:"active_days"`
+	FirstEvent      string  `json:"first_event,omitempty"`
+	LastEvent       string  `json:"last_event,omitempty"`
+	TopEvent        Count   `json:"top_event"`
+	TopEventShare   float64 `json:"top_event_share"`
+	TopPersonEvents int     `json:"top_person_events"`
+	TopPersonShare  float64 `json:"top_person_share"`
+}
+
 func Measure(events []Event) Metrics {
 	users := map[string]bool{}
 	sessions := map[string]bool{}
@@ -40,6 +54,50 @@ func Measure(events []Event) Metrics {
 	m.Users = len(users)
 	m.Sessions = len(sessions)
 	return m
+}
+
+func Decision(events []Event) DecisionContext {
+	result := DecisionContext{Readiness: "collecting"}
+	if len(events) == 0 {
+		return result
+	}
+
+	days := map[string]bool{}
+	people := map[string]int{}
+	first, last := events[0].Timestamp, events[0].Timestamp
+	for _, e := range events {
+		days[e.Timestamp.UTC().Format("2006-01-02")] = true
+		people[e.DistinctID]++
+		if e.Timestamp.Before(first) {
+			first = e.Timestamp
+		}
+		if e.Timestamp.After(last) {
+			last = e.Timestamp
+		}
+	}
+
+	result.ActiveDays = len(days)
+	result.FirstEvent = first.UTC().Format(time.RFC3339)
+	result.LastEvent = last.UTC().Format(time.RFC3339)
+	if breakdown := Breakdown(events, ""); len(breakdown) > 0 {
+		result.TopEvent = breakdown[0]
+		result.TopEventShare = float64(breakdown[0].Count) * 100 / float64(len(events))
+	}
+	for _, count := range people {
+		if count > result.TopPersonEvents {
+			result.TopPersonEvents = count
+		}
+	}
+	result.TopPersonShare = float64(result.TopPersonEvents) * 100 / float64(len(events))
+
+	users := len(people)
+	switch {
+	case users >= 30 && result.ActiveDays >= 7:
+		result.Readiness = "ready"
+	case users >= 10 && result.ActiveDays >= 3:
+		result.Readiness = "directional"
+	}
+	return result
 }
 func Series(events []Event, from, to time.Time) []Point {
 	counts := map[string]int{}
