@@ -326,6 +326,43 @@ func TestFirstInstallStatus(t *testing.T) {
 	}
 }
 
+func TestIndexServesVersionedAssets(t *testing.T) {
+	s, _ := testServer(t)
+	w := request(s.routes(), http.MethodGet, "/", "", "", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("index served with status %d", w.Code)
+	}
+	if got := w.Header().Get("Cache-Control"); got != "no-cache" {
+		t.Fatalf("index must always revalidate, got Cache-Control %q", got)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, `src="/app.js?v=`) {
+		t.Fatalf("index must reference a fingerprinted app.js: %s", body)
+	}
+	if strings.Contains(body, `src="/app.js"`) {
+		t.Fatalf("index still references an unfingerprinted app.js: %s", body)
+	}
+	if strings.Contains(body, `href="/style.css"`) {
+		t.Fatalf("index must reference a fingerprinted style.css: %s", body)
+	}
+}
+
+func TestFingerprintedAssetFetch(t *testing.T) {
+	s, _ := testServer(t)
+	w := request(s.routes(), http.MethodGet, "/app.js?v=anything", "", "", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("fingerprinted asset fetch failed: %d", w.Code)
+	}
+	if got := w.Header().Get("Cache-Control"); !strings.Contains(got, "immutable") {
+		t.Fatalf("fingerprinted asset must be immutable, got %q", got)
+	}
+	// Plain requests without a fingerprint still work for anything that links
+	// to app.js directly.
+	if w := request(s.routes(), http.MethodGet, "/app.js", "", "", ""); w.Code != http.StatusOK {
+		t.Fatalf("plain asset fetch failed: %d", w.Code)
+	}
+}
+
 func testEvents(t *testing.T, s *analytics.Store, project string) []analytics.Event {
 	t.Helper()
 	events, err := s.Events(project, time.Time{}, time.Now().Add(time.Hour))

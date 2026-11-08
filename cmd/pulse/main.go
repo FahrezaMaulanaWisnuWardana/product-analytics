@@ -10,6 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"net"
 	"net/http"
@@ -181,7 +182,7 @@ func (s *server) routes() http.Handler {
 		respond(w, 200, map[string]string{"status": "ready", "storage": "postgresql"})
 	})
 	mux.Handle("/api/", s.auth(http.HandlerFunc(s.api)))
-	mux.Handle("/", http.FileServer(http.FS(web.Files)))
+	mux.Handle("/", staticAssets())
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
@@ -193,6 +194,46 @@ func (s *server) routes() http.Handler {
 		mux.ServeHTTP(w, r)
 	})
 }
+// staticAssets serves the embedded web files with cache busting. index.html is
+// always revalidated and references app.js and style.css with a content hash
+// query, so a new build immediately gets new asset URLs even behind caches
+// that ignore origin revalidation. Fingerprinted assets are immutable.
+func staticAssets() http.Handler {
+	files := http.FileServer(http.FS(web.Files))
+	appVersion := assetVersion(web.Files, "app.js")
+	styleVersion := assetVersion(web.Files, "style.css")
+	index, err := fs.ReadFile(web.Files, "index.html")
+	if err != nil {
+		log.Fatalf("embedded index.html is unreadable: %v", err)
+	}
+	replacer := strings.NewReplacer(
+		`href="/style.css"`, `href="/style.css?v=`+styleVersion+`"`,
+		`src="/app.js"`, `src="/app.js?v=`+appVersion+`"`,
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" && r.URL.Path != "/index.html" {
+			if r.URL.Path == "/app.js" || strings.HasPrefix(r.URL.Path, "/app.js?") {
+				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+			}
+			files.ServeHTTP(w, r)
+			return
+		}
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Write([]byte(replacer.Replace(string(index))))
+	})
+}
+
+// assetVersion returns a short hex fingerprint of an embedded file's contents.
+func assetVersion(fsys fs.FS, name string) string {
+	data, err := fs.ReadFile(fsys, name)
+	if err != nil {
+		return "1"
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:4])
+}
+
 func databaseError(w http.ResponseWriter, err error) {
 	if errors.Is(err, analytics.ErrEventQuota) {
 		fail(w, http.StatusTooManyRequests, "Project event quota reached. Increase the configured quota only with matching storage and query capacity.")
