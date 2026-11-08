@@ -18,7 +18,7 @@ func validReportConfig(reportType string, config map[string]any) bool {
 	if !reportViews[reportType] || config == nil {
 		return false
 	}
-	allowed := map[string]bool{"view": true, "days": true, "metric": true, "eventName": true, "steps": true, "property": true, "value": true}
+	allowed := map[string]bool{"view": true, "days": true, "metric": true, "eventName": true, "steps": true, "property": true, "value": true, "version": true, "window_minutes": true}
 	for key := range config {
 		if !allowed[key] {
 			return false
@@ -56,8 +56,28 @@ func validReportConfig(reportType string, config map[string]any) bool {
 			return false
 		}
 		for _, step := range steps {
-			value, ok := step.(string)
-			if !ok || strings.TrimSpace(value) == "" || len(value) > 200 {
+			if value, ok := step.(string); ok {
+				if strings.TrimSpace(value) == "" || len(value) > 200 {
+					return false
+				}
+				continue
+			}
+			item, ok := step.(map[string]any)
+			if !ok || reportType != "funnels" || len(item) != 3 {
+				return false
+			}
+			typ, a := item["type"].(string)
+			op, b := item["operator"].(string)
+			value, c := item["value"].(string)
+			if !a || !b || !c || strings.TrimSpace(value) == "" || len(value) > 500 || (typ != "page" && typ != "event") || (op != "eq" && !(typ == "page" && op == "starts_with")) {
+				return false
+			}
+		}
+	}
+	for _, key := range []string{"version", "window_minutes"} {
+		if raw, exists := config[key]; exists {
+			n, ok := raw.(float64)
+			if !ok || n != float64(int(n)) || n < 1 || (key == "version" && n != 2) || (key == "window_minutes" && n > 525600) {
 				return false
 			}
 		}
@@ -219,11 +239,12 @@ func (s *server) reportsAPI(w http.ResponseWriter, r *http.Request, actor princi
 			return
 		}
 		respond(w, http.StatusOK, items)
-	case http.MethodPost:
+	case http.MethodPost, http.MethodPatch:
 		if !requireRole(w, r, "editor") {
 			return
 		}
 		var input struct {
+			ID     string         `json:"id"`
 			Name   string         `json:"name"`
 			Type   string         `json:"type"`
 			Config map[string]any `json:"config"`
@@ -236,13 +257,28 @@ func (s *server) reportsAPI(w http.ResponseWriter, r *http.Request, actor princi
 			fail(w, 400, "Invalid report configuration")
 			return
 		}
-		item, err := s.store.SaveReport(project, input.Name, input.Type, actor.Name, input.Config)
+		var item analytics.SavedReport
+		var err error
+		if r.Method == http.MethodPatch {
+			item, err = s.store.UpdateReport(project, input.ID, input.Name, input.Type, input.Config)
+		} else {
+			item, err = s.store.SaveReport(project, input.Name, input.Type, actor.Name, input.Config)
+		}
 		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				storeError(w, err)
+				return
+			}
 			fail(w, 400, err.Error())
 			return
 		}
-		s.record(actor, "report.created", project, item.ID, nil)
-		respond(w, http.StatusCreated, item)
+		if r.Method == http.MethodPatch {
+			s.record(actor, "report.updated", project, item.ID, nil)
+			respond(w, http.StatusOK, item)
+		} else {
+			s.record(actor, "report.created", project, item.ID, nil)
+			respond(w, http.StatusCreated, item)
+		}
 	case http.MethodDelete:
 		if !requireRole(w, r, "editor") {
 			return

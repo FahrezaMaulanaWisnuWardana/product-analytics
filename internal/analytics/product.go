@@ -213,6 +213,23 @@ func (s *Store) Reports(project string) ([]SavedReport, error) {
 	return out, rows.Err()
 }
 
+func (s *Store) UpdateReport(project, id, name, reportType string, config map[string]any) (SavedReport, error) {
+	name = strings.TrimSpace(name)
+	if name == "" || len(name) > 120 {
+		return SavedReport{}, errors.New("invalid report name")
+	}
+	raw, err := jsonObject(config)
+	if err != nil {
+		return SavedReport{}, err
+	}
+	if len(raw) > MaxCollaborationJSONBytes {
+		return SavedReport{}, errors.New("report config is too large")
+	}
+	ctx, cancel := timeout()
+	defer cancel()
+	return scanReport(s.db.QueryRowContext(ctx, `UPDATE saved_reports SET name=$3,config=$4,updated_at=now() WHERE project_id=$1 AND id=$2 AND report_type=$5 RETURNING id,project_id,name,report_type,config,created_by,created_at,updated_at`, project, id, name, raw, reportType))
+}
+
 func (s *Store) DeleteReport(project, id string) error {
 	ctx, cancel := timeout()
 	defer cancel()

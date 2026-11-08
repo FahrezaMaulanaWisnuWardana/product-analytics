@@ -169,6 +169,86 @@ type FunnelStep struct {
 	DropoffPeople []string `json:"dropoff_people"`
 }
 
+// FunnelCondition selects either a custom event or a pageview path.
+type FunnelCondition struct {
+	Type     string `json:"type"`
+	Operator string `json:"operator"`
+	Value    string `json:"value"`
+}
+
+// FunnelConditions evaluates typed steps while retaining the existing funnel
+// counting and identity semantics.
+func FunnelConditions(events []Event, conditions []FunnelCondition, window time.Duration) []FunnelStep {
+	// A single event can advance at most one step.
+	sorted := append([]Event(nil), events...)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		if sorted[i].Timestamp.Equal(sorted[j].Timestamp) {
+			return sorted[i].ID < sorted[j].ID
+		}
+		return sorted[i].Timestamp.Before(sorted[j].Timestamp)
+	})
+	type progress struct {
+		next  int
+		start time.Time
+	}
+	states := map[string]progress{}
+	reached := make([]map[string]bool, len(conditions))
+	for i := range reached {
+		reached[i] = map[string]bool{}
+	}
+	for _, e := range sorted {
+		p := states[e.DistinctID]
+		if p.next > 0 && e.Timestamp.Sub(p.start) > window {
+			p = progress{}
+		}
+		if p.next < len(conditions) {
+			c := conditions[p.next]
+			value := e.Name
+			if c.Type == "page" {
+				if e.Name != "$pageview" {
+					states[e.DistinctID] = p
+					continue
+				}
+				value, _ = e.Properties["$pathname"].(string)
+			}
+			match := value == c.Value
+			if c.Operator == "starts_with" {
+				match = strings.HasPrefix(value, c.Value)
+			}
+			if match {
+				if p.next == 0 {
+					p.start = e.Timestamp
+				}
+				reached[p.next][e.DistinctID] = true
+				p.next++
+			}
+		}
+		states[e.DistinctID] = p
+	}
+	out := make([]FunnelStep, len(conditions))
+	for i, c := range conditions {
+		out[i].Name = c.Value
+		out[i].Users = len(reached[i])
+		if len(reached[0]) > 0 {
+			out[i].Rate = float64(out[i].Users) * 100 / float64(len(reached[0]))
+		}
+		for id := range reached[i] {
+			out[i].People = append(out[i].People, id)
+		}
+		if i > 0 {
+			for id := range reached[i-1] {
+				if !reached[i][id] {
+					out[i].DropoffPeople = append(out[i].DropoffPeople, id)
+				}
+			}
+			out[i].Dropoff = len(out[i].DropoffPeople)
+		}
+		sort.Strings(out[i].People)
+		sort.Strings(out[i].DropoffPeople)
+	}
+	return out
+}
+
 // Funnel counts people completing steps in order within a conversion window.
 func Funnel(events []Event, steps []string, window time.Duration) []FunnelStep {
 	sorted := append([]Event{}, events...)

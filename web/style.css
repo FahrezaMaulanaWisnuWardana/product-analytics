@@ -2474,3 +2474,26 @@ dialog .wide {
   .guide-help-grid { grid-template-columns:1fr; }
   .guide-glossary > div { grid-template-columns:1fr; }
 }
+#detail-dialog:has(#funnel-editor) { width: min(760px, 95vw); }
+.funnel-report { margin-bottom: 16px; }
+.funnel-report-row { display:flex; gap:16px; padding:14px 20px; }
+.funnel-number { flex:none; width:28px; height:28px; display:grid; place-items:center; border-radius:50%; background:var(--surface-alt, #eef3ee); font-weight:600; }
+.funnel-report-body { flex:1; min-width:0; }
+.funnel-report-label { display:flex; justify-content:space-between; gap:16px; align-items:end; }
+.funnel-report-label span:first-child { display:grid; gap:4px; overflow-wrap:anywhere; }
+.funnel-report-label small { opacity:.65; }
+.funnel-track { height:7px; background:#e5eae5; border-radius:5px; margin-top:12px; overflow:hidden; }
+.funnel-track span { display:block; height:100%; background:#4c8d6b; border-radius:5px; }
+#funnel-editor label { display:grid; gap:6px; margin:14px 0; }
+.funnel-editor-step { display:flex; flex-wrap:wrap; gap:8px; border:1px solid #dce5dd; border-radius:8px; padding:12px; margin:12px 0; }
+.funnel-editor-step input { flex:1; min-width:140px; }
+@media (max-width:600px) { .funnel-report-label { align-items:start; flex-direction:column; } .funnel-editor-step input { flex-basis:100%; } }
+.journey-columns { display:grid; grid-auto-flow:column; grid-auto-columns:minmax(190px,1fr); gap:32px; overflow-x:auto; padding:20px; }
+.journey-column { min-width:0; }
+.journey-column h3 { font-size:14px; margin:0; }
+.journey-node { width:100%; text-align:left; display:flex; justify-content:space-between; align-items:center; gap:10px; border:1px solid var(--line); background:transparent; color:inherit; border-radius:6px; padding:10px; margin:8px 0; cursor:pointer; }
+.journey-node span { display:grid; min-width:0; overflow-wrap:anywhere; }
+.journey-node small { opacity:.65; }
+.journey-node.selected { background:#4c8d6b; border-color:#4c8d6b; color:white; }
+.journey-node:focus-visible { outline:3px solid #7eb692; outline-offset:2px; }
+.journey-foot { padding:0 20px 20px; }

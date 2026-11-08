@@ -97,6 +97,38 @@ func at(s string) time.Time {
 	}
 	return v
 }
+func TestTypedFunnelDistinguishesPages(t *testing.T) {
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	events := []Event{
+		{ID: "1", Name: "$pageview", DistinctID: "a", Timestamp: now, Properties: map[string]any{"$pathname": "/"}},
+		{ID: "2", Name: "$pageview", DistinctID: "a", Timestamp: now.Add(time.Minute), Properties: map[string]any{"$pathname": "/pricing/pro"}},
+		{ID: "3", Name: "signup", DistinctID: "a", Timestamp: now.Add(2 * time.Minute)},
+		{ID: "4", Name: "$pageview", DistinctID: "b", Timestamp: now, Properties: map[string]any{"$pathname": "/"}},
+	}
+	result := FunnelConditions(events, []FunnelCondition{{Type: "page", Operator: "eq", Value: "/"}, {Type: "page", Operator: "starts_with", Value: "/pricing"}, {Type: "event", Operator: "eq", Value: "signup"}}, time.Hour)
+	if result[0].Users != 2 || result[1].Users != 1 || result[2].Users != 1 || result[1].Dropoff != 1 {
+		t.Fatalf("unexpected funnel: %+v", result)
+	}
+}
+
+func TestJourneyFollowsSelectedSequence(t *testing.T) {
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	events := []Event{
+		{ID: "1", Name: "$pageview", DistinctID: "a", Timestamp: now, Properties: map[string]any{"$pathname": "/"}},
+		{ID: "2", Name: "signup", DistinctID: "a", Timestamp: now.Add(time.Minute)},
+		{ID: "3", Name: "$pageview", DistinctID: "b", Timestamp: now, Properties: map[string]any{"$pathname": "/"}},
+		{ID: "4", Name: "browse", DistinctID: "b", Timestamp: now.Add(time.Minute)},
+	}
+	result := Journey(events, []string{"page:/"}, 3, 12)
+	if result.Columns[0].People != 2 || result.Columns[1].People != 2 || len(result.Columns[1].Nodes) != 2 {
+		t.Fatalf("unexpected journey: %+v", result)
+	}
+	result = Journey(events, []string{"page:/", "event:signup"}, 3, 12)
+	if result.Columns[0].People != 1 || result.Columns[1].Nodes[0].ID != "event:signup" {
+		t.Fatalf("unexpected selected journey: %+v", result)
+	}
+}
+
 func TestFunnelOrderWindowAndUniquePeople(t *testing.T) {
 	base := at("2026-10-01T00:00:00Z")
 	events := []Event{

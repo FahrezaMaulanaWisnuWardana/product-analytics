@@ -68,4 +68,7 @@ Thumbs.db
 *~
 
 #graphify
-/graphify-out/*
+/graphify-out
+
+#docs
+/docs

@@ -194,6 +194,7 @@ func (s *server) routes() http.Handler {
 		mux.ServeHTTP(w, r)
 	})
 }
+
 // staticAssets serves the embedded web files with cache busting. index.html is
 // always revalidated and references app.js and style.css with a content hash
 // query, so a new build immediately gets new asset URLs even behind caches
@@ -580,6 +581,52 @@ func (s *server) api(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	if r.URL.Path == "/api/funnels/query" && r.Method == http.MethodPost {
+		var input struct {
+			Steps         []analytics.FunnelCondition `json:"steps"`
+			WindowMinutes int                         `json:"window_minutes"`
+			IncludePeople bool                        `json:"include_people"`
+		}
+		if decode(w, r, &input) != nil || len(input.Steps) < 2 || len(input.Steps) > 8 || input.WindowMinutes < 1 || input.WindowMinutes > 525600 {
+			fail(w, 400, "Choose 2–8 steps and a valid conversion window")
+			return
+		}
+		for _, step := range input.Steps {
+			if strings.TrimSpace(step.Value) == "" || len(step.Value) > 500 || (step.Type != "page" && step.Type != "event") || (step.Operator != "eq" && !(step.Type == "page" && step.Operator == "starts_with")) {
+				fail(w, 400, "Invalid funnel step")
+				return
+			}
+		}
+		p, ok, err := s.store.Project(r.URL.Query().Get("project"))
+		if err != nil {
+			databaseError(w, err)
+			return
+		}
+		if !ok {
+			fail(w, 404, "Project not found")
+			return
+		}
+		from, to, err := dateRange(r)
+		if err != nil {
+			fail(w, 400, err.Error())
+			return
+		}
+		events, err := s.store.Events(p.ID, from, to)
+		if err != nil {
+			databaseError(w, err)
+			return
+		}
+		events = analytics.FilterProperties(analytics.CanonicalizeIdentity(events), r.URL.Query().Get("property"), r.URL.Query().Get("value"))
+		result := analytics.FunnelConditions(events, input.Steps, time.Duration(input.WindowMinutes)*time.Minute)
+		if !input.IncludePeople {
+			for i := range result {
+				result[i].People = nil
+				result[i].DropoffPeople = nil
+			}
+		}
+		respond(w, 200, result)
+		return
+	}
 	if r.Method != "GET" {
 		fail(w, 405, "Method not allowed")
 		return
@@ -684,6 +731,24 @@ func (s *server) api(w http.ResponseWriter, r *http.Request) {
 		respond(w, 200, analytics.Catalog(events))
 	case "/api/paths":
 		respond(w, 200, analytics.Paths(events))
+	case "/api/journey":
+		depth, err := positiveQueryInt(r, "steps", 3, 3, 7)
+		if err != nil {
+			fail(w, 400, err.Error())
+			return
+		}
+		selected := r.URL.Query()["selected"]
+		if len(selected) >= depth {
+			fail(w, 400, "Too many selected steps")
+			return
+		}
+		for _, item := range selected {
+			if len(item) > 510 || !(strings.HasPrefix(item, "page:") || strings.HasPrefix(item, "event:")) {
+				fail(w, 400, "Invalid journey step")
+				return
+			}
+		}
+		respond(w, 200, analytics.Journey(events, selected, depth, 12))
 	case "/api/export":
 		w.Header().Set("Content-Disposition", "attachment; filename=pulse-events.json")
 		respond(w, 200, events)

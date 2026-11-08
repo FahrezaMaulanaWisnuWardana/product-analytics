@@ -62,6 +62,33 @@ func TestAdminAuthAndLogin(t *testing.T) {
 		t.Fatal("cross-origin admin write accepted", w.Code)
 	}
 }
+
+func TestSavedTypedFunnelAPI(t *testing.T) {
+	s, h := testServer(t)
+	p, err := s.store.CreateProject("Funnels", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := "/api/reports?project=" + p.ID
+	body := `{"name":"Pricing","type":"funnels","config":{"view":"funnels","version":2,"window_minutes":1440,"steps":[{"type":"page","operator":"eq","value":"/"},{"type":"event","operator":"eq","value":"signup"}]}}`
+	w := request(h, "POST", path, body, "", "test-admin")
+	if w.Code != 201 {
+		t.Fatalf("create: %d %s", w.Code, w.Body.String())
+	}
+	var report analytics.SavedReport
+	if err := json.Unmarshal(w.Body.Bytes(), &report); err != nil {
+		t.Fatal(err)
+	}
+	updated := strings.Replace(body, `"name":"Pricing"`, `"id":"`+report.ID+`","name":"Activation"`, 1)
+	w = request(h, "PATCH", path, updated, "", "test-admin")
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "Activation") {
+		t.Fatalf("update: %d %s", w.Code, w.Body.String())
+	}
+	w = request(h, "POST", "/api/funnels/query?project="+p.ID, `{"window_minutes":1440,"steps":[{"type":"page","operator":"eq","value":"/"},{"type":"event","operator":"starts_with","value":"signup"}]}`, "", "test-admin")
+	if w.Code != 400 {
+		t.Fatalf("invalid operator accepted: %d", w.Code)
+	}
+}
 func TestInsecureAdminAccessIsLoopbackOnly(t *testing.T) {
 	s, _ := testServer(t)
 	s.secure = false
@@ -188,7 +215,7 @@ func TestWorkspaceRolesAndSharedReports(t *testing.T) {
 	if w := request(h, http.MethodPost, path, `{"name":"Blocked","type":"overview","config":{}}`, "", tokenResult.Token); w.Code != http.StatusForbidden {
 		t.Fatal("viewer write accepted", w.Code, w.Body.String())
 	}
-	createdReport := request(h, http.MethodPost, path, `{"name":"Activation","type":"funnel","config":{"steps":["signed_up","activated"]}}`, "", "test-admin")
+	createdReport := request(h, http.MethodPost, path, `{"name":"Activation","type":"funnels","config":{"steps":["signed_up","activated"]}}`, "", "test-admin")
 	if createdReport.Code != http.StatusCreated {
 		t.Fatal(createdReport.Code, createdReport.Body.String())
 	}
