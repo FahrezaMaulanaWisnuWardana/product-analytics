@@ -1,7 +1,9 @@
 package analytics
 
 import (
+	"fmt"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -159,10 +161,12 @@ func Breakdown(events []Event, property string) []Count {
 }
 
 type FunnelStep struct {
-	Name    string  `json:"name"`
-	Users   int     `json:"users"`
-	Rate    float64 `json:"rate"`
-	Dropoff int     `json:"dropoff"`
+	Name          string   `json:"name"`
+	Users         int      `json:"users"`
+	Rate          float64  `json:"rate"`
+	Dropoff       int      `json:"dropoff"`
+	People        []string `json:"people"`
+	DropoffPeople []string `json:"dropoff_people"`
 }
 
 // Funnel counts people completing steps in order within a conversion window.
@@ -207,7 +211,197 @@ func Funnel(events []Event, steps []string, window time.Duration) []FunnelStep {
 		if i > 0 {
 			drop = len(reached[i-1]) - v
 		}
-		out = append(out, FunnelStep{n, v, rate, drop})
+		people := make([]string, 0, len(reached[i]))
+		for id := range reached[i] {
+			people = append(people, id)
+		}
+		sort.Strings(people)
+		dropped := []string{}
+		if i > 0 {
+			for id := range reached[i-1] {
+				if !reached[i][id] {
+					dropped = append(dropped, id)
+				}
+			}
+			sort.Strings(dropped)
+		}
+		out = append(out, FunnelStep{Name: n, Users: v, Rate: rate, Dropoff: drop, People: people, DropoffPeople: dropped})
+	}
+	return out
+}
+
+// CanonicalizeIdentity joins anonymous activity to the identified person when
+// the browser SDK supplies the previous anonymous ID on an $identify event.
+func CanonicalizeIdentity(events []Event) []Event {
+	aliases := map[string]string{}
+	for _, e := range events {
+		if e.Name != "$identify" {
+			continue
+		}
+		if old, ok := e.Properties["$anon_distinct_id"].(string); ok && old != "" && old != e.DistinctID {
+			aliases[old] = e.DistinctID
+		}
+	}
+	canonical := func(id string) string {
+		seen := map[string]bool{}
+		for aliases[id] != "" && !seen[id] {
+			seen[id] = true
+			id = aliases[id]
+		}
+		return id
+	}
+	out := append([]Event{}, events...)
+	for i := range out {
+		out[i].DistinctID = canonical(out[i].DistinctID)
+	}
+	return out
+}
+
+// FilterProperties applies the same exact property segment to every report.
+func FilterProperties(events []Event, property, value string) []Event {
+	property, value = strings.TrimSpace(property), strings.TrimSpace(value)
+	if property == "" || value == "" {
+		return events
+	}
+	out := make([]Event, 0, len(events))
+	for _, e := range events {
+		if fmt.Sprint(e.Properties[property]) == value {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+type EventDefinition struct {
+	Name       string            `json:"name"`
+	Count      int               `json:"count"`
+	Users      int               `json:"users"`
+	FirstSeen  time.Time         `json:"first_seen"`
+	LastSeen   time.Time         `json:"last_seen"`
+	Properties map[string]string `json:"properties"`
+	Warnings   []string          `json:"warnings"`
+}
+
+type TrackingHealth struct {
+	Events         int               `json:"events"`
+	EventTypes     int               `json:"event_types"`
+	IdentifiedRate float64           `json:"identified_rate"`
+	SessionRate    float64           `json:"session_rate"`
+	Definitions    []EventDefinition `json:"definitions"`
+}
+
+func valueType(v any) string {
+	switch v.(type) {
+	case bool:
+		return "boolean"
+	case float64, float32, int, int64, int32:
+		return "number"
+	case string:
+		return "string"
+	case []any:
+		return "array"
+	case map[string]any:
+		return "object"
+	default:
+		return "unknown"
+	}
+}
+
+// Catalog makes instrumentation quality visible before it affects decisions.
+func Catalog(events []Event) TrackingHealth {
+	type accumulator struct {
+		definition EventDefinition
+		people     map[string]bool
+		types      map[string]map[string]bool
+	}
+	byName := map[string]*accumulator{}
+	identified, sessions := 0, 0
+	for _, e := range events {
+		if !strings.HasPrefix(e.DistinctID, "p_") {
+			identified++
+		}
+		if e.SessionID != "" {
+			sessions++
+		}
+		a := byName[e.Name]
+		if a == nil {
+			a = &accumulator{definition: EventDefinition{Name: e.Name, FirstSeen: e.Timestamp, LastSeen: e.Timestamp, Properties: map[string]string{}, Warnings: []string{}}, people: map[string]bool{}, types: map[string]map[string]bool{}}
+			byName[e.Name] = a
+		}
+		a.definition.Count++
+		a.people[e.DistinctID] = true
+		if e.Timestamp.Before(a.definition.FirstSeen) {
+			a.definition.FirstSeen = e.Timestamp
+		}
+		if e.Timestamp.After(a.definition.LastSeen) {
+			a.definition.LastSeen = e.Timestamp
+		}
+		for key, value := range e.Properties {
+			if a.types[key] == nil {
+				a.types[key] = map[string]bool{}
+			}
+			a.types[key][valueType(value)] = true
+		}
+	}
+	definitions := make([]EventDefinition, 0, len(byName))
+	for _, a := range byName {
+		a.definition.Users = len(a.people)
+		for property, types := range a.types {
+			names := make([]string, 0, len(types))
+			for name := range types {
+				names = append(names, name)
+			}
+			sort.Strings(names)
+			a.definition.Properties[property] = strings.Join(names, " | ")
+			if len(names) > 1 {
+				a.definition.Warnings = append(a.definition.Warnings, property+" changes type")
+			}
+		}
+		sort.Strings(a.definition.Warnings)
+		definitions = append(definitions, a.definition)
+	}
+	sort.Slice(definitions, func(i, j int) bool { return definitions[i].Count > definitions[j].Count })
+	health := TrackingHealth{Events: len(events), EventTypes: len(definitions), Definitions: definitions}
+	if len(events) > 0 {
+		health.IdentifiedRate = float64(identified) * 100 / float64(len(events))
+		health.SessionRate = float64(sessions) * 100 / float64(len(events))
+	}
+	return health
+}
+
+type PathEdge struct {
+	From  string `json:"from"`
+	To    string `json:"to"`
+	Count int    `json:"count"`
+	Users int    `json:"users"`
+}
+
+// Paths returns the most common consecutive event transitions per person.
+func Paths(events []Event) []PathEdge {
+	sorted := append([]Event{}, events...)
+	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].Timestamp.Before(sorted[j].Timestamp) })
+	last := map[string]string{}
+	counts := map[string]int{}
+	people := map[string]map[string]bool{}
+	for _, e := range sorted {
+		if previous := last[e.DistinctID]; previous != "" && previous != e.Name {
+			key := previous + "\x00" + e.Name
+			counts[key]++
+			if people[key] == nil {
+				people[key] = map[string]bool{}
+			}
+			people[key][e.DistinctID] = true
+		}
+		last[e.DistinctID] = e.Name
+	}
+	out := make([]PathEdge, 0, len(counts))
+	for key, count := range counts {
+		parts := strings.SplitN(key, "\x00", 2)
+		out = append(out, PathEdge{From: parts[0], To: parts[1], Count: count, Users: len(people[key])})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Count > out[j].Count })
+	if len(out) > 30 {
+		out = out[:30]
 	}
 	return out
 }

@@ -161,6 +161,119 @@ func TestProjectSettingsAndInvalidDates(t *testing.T) {
 	}
 }
 
+func TestWorkspaceRolesAndSharedReports(t *testing.T) {
+	s, h := testServer(t)
+	p, err := s.store.CreateProject("Shared", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	created := request(h, http.MethodPost, "/api/access-tokens", `{"name":"Analyst","role":"viewer"}`, "", "test-admin")
+	if created.Code != http.StatusCreated {
+		t.Fatal(created.Code, created.Body.String())
+	}
+	var tokenResult struct {
+		Token  string                `json:"token"`
+		Access analytics.AccessToken `json:"access"`
+	}
+	if err = json.Unmarshal(created.Body.Bytes(), &tokenResult); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResult.Token == "" || tokenResult.Access.Role != "viewer" {
+		t.Fatal("token response omitted one-time credential or role")
+	}
+	if w := request(h, http.MethodGet, "/api/me", "", "", tokenResult.Token); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"role":"viewer"`) {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	path := "/api/reports?project=" + p.ID
+	if w := request(h, http.MethodPost, path, `{"name":"Blocked","type":"overview","config":{}}`, "", tokenResult.Token); w.Code != http.StatusForbidden {
+		t.Fatal("viewer write accepted", w.Code, w.Body.String())
+	}
+	createdReport := request(h, http.MethodPost, path, `{"name":"Activation","type":"funnel","config":{"steps":["signed_up","activated"]}}`, "", "test-admin")
+	if createdReport.Code != http.StatusCreated {
+		t.Fatal(createdReport.Code, createdReport.Body.String())
+	}
+	maliciousReport := request(h, http.MethodPost, path, `{"name":"Injected","type":"overview","config":{"metric":"users\"><form action=https://example.test>","view":"overview"}}`, "", "test-admin")
+	if maliciousReport.Code != http.StatusBadRequest {
+		t.Fatal("unsafe saved-report metric accepted", maliciousReport.Code, maliciousReport.Body.String())
+	}
+	if w := request(h, http.MethodGet, path, "", "", tokenResult.Token); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "Activation") {
+		t.Fatal("shared report unavailable to viewer", w.Code, w.Body.String())
+	}
+	if w := request(h, http.MethodGet, "/api/access-tokens", "", "", tokenResult.Token); w.Code != http.StatusForbidden {
+		t.Fatal("viewer listed workspace credentials", w.Code)
+	}
+	if w := request(h, http.MethodDelete, "/api/access-tokens?id="+tokenResult.Access.ID, "", "", "test-admin"); w.Code != http.StatusOK {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	if w := request(h, http.MethodGet, "/api/me", "", "", tokenResult.Token); w.Code != http.StatusUnauthorized {
+		t.Fatal("revoked token remained usable", w.Code)
+	}
+}
+
+func TestEventPagination(t *testing.T) {
+	s, h := testServer(t)
+	p, err := s.store.CreateProject("Paginated", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Add(-25 * time.Second)
+	events := make([]analytics.Event, 25)
+	for i := range events {
+		events[i] = analytics.Event{ID: fmt.Sprintf("event-%02d", i), ProjectID: p.ID, Name: "viewed", DistinctID: "person", Timestamp: now.Add(time.Duration(i) * time.Second)}
+	}
+	if _, err = s.store.AddBatch(events); err != nil {
+		t.Fatal(err)
+	}
+	w := request(h, http.MethodGet, "/api/events?project="+p.ID+"&page=2&page_size=10", "", "", "test-admin")
+	if w.Code != http.StatusOK {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	var result struct {
+		Events   []analytics.Event `json:"events"`
+		Total    int               `json:"total"`
+		Page     int               `json:"page"`
+		PageSize int               `json:"page_size"`
+		Pages    int               `json:"pages"`
+	}
+	if err = json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Events) != 10 || result.Total != 25 || result.Page != 2 || result.PageSize != 10 || result.Pages != 3 {
+		t.Fatalf("unexpected pagination: %+v", result)
+	}
+	if result.Events[0].ID != "event-14" || result.Events[9].ID != "event-05" {
+		t.Fatal("events are not paginated in newest-first order")
+	}
+	if w = request(h, http.MethodGet, "/api/events?project="+p.ID+"&page_size=500", "", "", "test-admin"); w.Code != http.StatusBadRequest {
+		t.Fatal("oversized page accepted", w.Code)
+	}
+}
+
+func TestProjectDeletionCascadesExistingData(t *testing.T) {
+	s, h := testServer(t)
+	p, err := s.store.CreateProject("Disposable", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.store.Add(analytics.Event{
+		ID:         "existing-event",
+		ProjectID:  p.ID,
+		Name:       "signed_up",
+		DistinctID: "person-1",
+		Timestamp:  time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	w := request(h, http.MethodDelete, "/api/project-policy?project="+p.ID, "", "", "test-admin")
+	if w.Code != http.StatusOK {
+		t.Fatalf("non-empty project deletion failed: %d %s", w.Code, w.Body.String())
+	}
+	if _, ok, err := s.store.Project(p.ID); err != nil || ok {
+		t.Fatalf("project still exists after deletion: ok=%v err=%v", ok, err)
+	}
+}
+
 func TestFirstInstallStatus(t *testing.T) {
 	s, h := testServer(t)
 	status := func(want bool) {

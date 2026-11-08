@@ -13,15 +13,17 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
 type Project struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	Key       string    `json:"key"`
-	Origins   []string  `json:"origins"`
-	CreatedAt time.Time `json:"created_at"`
+	ID            string    `json:"id"`
+	Name          string    `json:"name"`
+	Key           string    `json:"key"`
+	Origins       []string  `json:"origins"`
+	CreatedAt     time.Time `json:"created_at"`
+	RetentionDays int       `json:"retention_days"`
 }
 type Event struct {
 	ID         string         `json:"id"`
@@ -36,6 +38,14 @@ type Event struct {
 const (
 	DefaultMaxEventsPerProject = 1_000_000
 	DefaultMaxQueryEvents      = 100_000
+	MaxEventPropertiesBytes    = 64 * 1024
+	MaxQueryBytes              = 32 * 1024 * 1024
+	MaxProjects                = 100
+	MaxAccessTokens            = 100
+	MaxProjectOrigins          = 100
+	MaxProjectOriginsBytes     = 64 * 1024
+	DefaultAuditRetentionDays  = 365
+	DefaultTokenRetentionDays  = 90
 )
 
 type Store struct {
@@ -48,7 +58,18 @@ var (
 	ErrProjectNotFound = errors.New("project not found")
 	ErrEventQuota      = errors.New("project event quota reached")
 	ErrQueryEventLimit = errors.New("query event limit reached")
+	ErrEventBytesLimit = errors.New("event properties byte limit reached")
+	ErrQueryBytesLimit = errors.New("query byte limit reached")
+	ErrWorkspaceLimit  = errors.New("workspace capacity limit reached")
 )
+
+func mapWorkspaceLimit(err error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "P0001" {
+		return fmt.Errorf("%w: %s", ErrWorkspaceLimit, pgErr.Message)
+	}
+	return err
+}
 
 //go:embed migrations/*.sql
 var migrations embed.FS
@@ -138,12 +159,12 @@ func (s *Store) migrate(ctx context.Context) error {
 
 type scanner interface{ Scan(...any) error }
 
-const projectColumns = "id,name,api_key,origins,created_at"
+const projectColumns = "id,name,api_key,origins,created_at,retention_days"
 
 func scanProject(row scanner) (Project, error) {
 	var p Project
 	var origins []byte
-	err := row.Scan(&p.ID, &p.Name, &p.Key, &origins, &p.CreatedAt)
+	err := row.Scan(&p.ID, &p.Name, &p.Key, &origins, &p.CreatedAt, &p.RetentionDays)
 	if err != nil {
 		return p, err
 	}
@@ -153,7 +174,7 @@ func scanProject(row scanner) (Project, error) {
 func (s *Store) Projects() ([]Project, error) {
 	ctx, cancel := timeout()
 	defer cancel()
-	rows, err := s.db.QueryContext(ctx, "SELECT "+projectColumns+" FROM projects ORDER BY created_at,id")
+	rows, err := s.db.QueryContext(ctx, "SELECT "+projectColumns+" FROM projects ORDER BY created_at,id LIMIT $1", MaxProjects+1)
 	if err != nil {
 		return nil, err
 	}
@@ -165,6 +186,9 @@ func (s *Store) Projects() ([]Project, error) {
 			return nil, err
 		}
 		out = append(out, p)
+		if len(out) > MaxProjects {
+			return nil, fmt.Errorf("%w: projects exceed %d records", ErrWorkspaceLimit, MaxProjects)
+		}
 	}
 	return out, rows.Err()
 }
@@ -195,6 +219,9 @@ func projectValues(name string, origins []string) (string, []byte, error) {
 		origins = []string{}
 	}
 	b, err := json.Marshal(origins)
+	if err == nil && (len(origins) > MaxProjectOrigins || len(b) > MaxProjectOriginsBytes) {
+		return "", nil, errors.New("project origins exceed the workspace limit")
+	}
 	return name, b, err
 }
 func (s *Store) CreateProject(name string, origins []string) (Project, error) {
@@ -204,7 +231,8 @@ func (s *Store) CreateProject(name string, origins []string) (Project, error) {
 	}
 	ctx, cancel := timeout()
 	defer cancel()
-	return scanProject(s.db.QueryRowContext(ctx, "INSERT INTO projects(id,name,api_key,origins,created_at) VALUES($1,$2,$3,$4,$5) RETURNING "+projectColumns, ID("prj_"), name, ID("pk_"), b, time.Now().UTC()))
+	p, err := scanProject(s.db.QueryRowContext(ctx, "INSERT INTO projects(id,name,api_key,origins,created_at) VALUES($1,$2,$3,$4,$5) RETURNING "+projectColumns, ID("prj_"), name, ID("pk_"), b, time.Now().UTC()))
+	return p, mapWorkspaceLimit(err)
 }
 func (s *Store) UpdateProject(id, name string, origins []string) (Project, error) {
 	name, b, err := projectValues(name, origins)
@@ -278,6 +306,9 @@ func insertEvents(ctx context.Context, tx *sql.Tx, events []Event, maxEventsPerP
 		if err != nil {
 			return 0, err
 		}
+		if len(b) > MaxEventPropertiesBytes {
+			return 0, fmt.Errorf("%w: event %s exceeds %d bytes", ErrEventBytesLimit, e.ID, MaxEventPropertiesBytes)
+		}
 		res, err := stmt.ExecContext(ctx, e.ProjectID, e.ID, e.Name, e.DistinctID, e.SessionID, e.Timestamp, b)
 		if err != nil {
 			return 0, err
@@ -309,6 +340,7 @@ func (s *Store) Events(project string, from, to time.Time) ([]Event, error) {
 	}
 	defer rows.Close()
 	out := []Event{}
+	totalBytes := 0
 	for rows.Next() {
 		var e Event
 		var props []byte
@@ -317,6 +349,10 @@ func (s *Store) Events(project string, from, to time.Time) ([]Event, error) {
 		}
 		if err = json.Unmarshal(props, &e.Properties); err != nil {
 			return nil, err
+		}
+		totalBytes += len(props) + len(e.ID) + len(e.ProjectID) + len(e.Name) + len(e.DistinctID) + len(e.SessionID)
+		if totalBytes > MaxQueryBytes {
+			return nil, fmt.Errorf("%w: narrow the query below %d bytes", ErrQueryBytesLimit, MaxQueryBytes)
 		}
 		out = append(out, e)
 		if len(out) > s.maxQueryEvents {

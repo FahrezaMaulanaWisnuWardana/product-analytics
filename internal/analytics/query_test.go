@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"pulse/internal/testdb"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -42,6 +43,53 @@ func TestEventQuotaAndQueryLimit(t *testing.T) {
 	}
 }
 
+func TestEventPropertiesByteLimit(t *testing.T) {
+	s, err := Open(testdb.URL(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	p, err := s.CreateProject("Property limit", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := Event{ID: "large", ProjectID: p.ID, Name: "click", DistinctID: "u", Timestamp: time.Now().UTC(), Properties: map[string]any{"value": strings.Repeat("x", MaxEventPropertiesBytes)}}
+	if _, err = s.Add(e); !errors.Is(err, ErrEventBytesLimit) {
+		t.Fatal("oversized event properties accepted", err)
+	}
+}
+
+func TestDeletePersonRemovesLinkedAnonymousEvents(t *testing.T) {
+	s, err := Open(testdb.URL(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	p, err := s.CreateProject("Deletion aliases", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	events := []Event{
+		{ID: "anonymous", ProjectID: p.ID, Name: "viewed", DistinctID: "anon-1", Timestamp: now},
+		{ID: "identify", ProjectID: p.ID, Name: "$identify", DistinctID: "user-1", Timestamp: now.Add(time.Second), Properties: map[string]any{"$anon_distinct_id": "anon-1"}},
+		{ID: "identified", ProjectID: p.ID, Name: "clicked", DistinctID: "user-1", Timestamp: now.Add(2 * time.Second)},
+	}
+	if _, err = s.AddBatch(events); err != nil {
+		t.Fatal(err)
+	}
+	deleted, err := s.DeletePerson(p.ID, "user-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleted != 3 {
+		t.Fatalf("deleted %d events; want 3", deleted)
+	}
+	if remaining := storedEvents(t, s, p.ID); len(remaining) != 0 {
+		t.Fatalf("linked events remain: %+v", remaining)
+	}
+}
+
 func at(s string) time.Time {
 	v, err := time.Parse(time.RFC3339, s)
 	if err != nil {
@@ -63,6 +111,44 @@ func TestFunnelOrderWindowAndUniquePeople(t *testing.T) {
 	f := Funnel(events, []string{"visit", "pay"}, 7*24*time.Hour)
 	if f[0].Users != 2 || f[1].Users != 1 || f[1].Rate != 50 || f[1].Dropoff != 1 {
 		t.Fatalf("unexpected funnel: %+v", f)
+	}
+	if len(f[1].People) != 1 || f[1].People[0] != "a" || len(f[1].DropoffPeople) != 1 || f[1].DropoffPeople[0] != "b" {
+		t.Fatalf("unexpected funnel drill-down: %+v", f[1])
+	}
+}
+
+func TestIdentitySegmentsCatalogAndPaths(t *testing.T) {
+	base := at("2026-10-01T00:00:00Z")
+	events := []Event{
+		{Name: "$pageview", DistinctID: "p_anon", SessionID: "s1", Timestamp: base, Properties: map[string]any{"plan": "Pro", "score": 1.0}},
+		{Name: "$identify", DistinctID: "user-1", SessionID: "s1", Timestamp: base.Add(time.Minute), Properties: map[string]any{"$anon_distinct_id": "p_anon", "plan": "Pro"}},
+		{Name: "created", DistinctID: "user-1", SessionID: "s1", Timestamp: base.Add(2 * time.Minute), Properties: map[string]any{"plan": "Pro", "score": "high"}},
+		{Name: "created", DistinctID: "user-2", Timestamp: base.Add(3 * time.Minute), Properties: map[string]any{"plan": "Free", "score": 2.0}},
+	}
+	canonical := CanonicalizeIdentity(events)
+	if got := Measure(canonical).Users; got != 2 {
+		t.Fatalf("identity was not merged: got %d users", got)
+	}
+	pro := FilterProperties(canonical, "plan", "Pro")
+	if len(pro) != 3 {
+		t.Fatalf("segment returned %d events", len(pro))
+	}
+	paths := Paths(pro)
+	if len(paths) != 2 || paths[0].Users != 1 {
+		t.Fatalf("unexpected paths: %+v", paths)
+	}
+	health := Catalog(canonical)
+	if health.Events != 4 || health.EventTypes != 3 || health.SessionRate != 75 {
+		t.Fatalf("unexpected health summary: %+v", health)
+	}
+	var created EventDefinition
+	for _, definition := range health.Definitions {
+		if definition.Name == "created" {
+			created = definition
+		}
+	}
+	if len(created.Warnings) != 1 || created.Warnings[0] != "score changes type" {
+		t.Fatalf("schema drift was not detected: %+v", created)
 	}
 }
 func TestRetentionUsesFirstEverEventAndUnobservedDays(t *testing.T) {

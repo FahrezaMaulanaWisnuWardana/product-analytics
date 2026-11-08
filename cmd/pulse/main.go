@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -30,6 +32,14 @@ type server struct {
 	secure bool
 }
 
+type principal struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Role string `json:"role"`
+}
+
+type principalContextKey struct{}
+
 func main() {
 	addr := flag.String("addr", "127.0.0.1:8080", "HTTP listen address")
 	importFile := flag.String("import-jsonl", "", "import a legacy events.jsonl file and exit")
@@ -50,6 +60,14 @@ func main() {
 		log.Fatal(err)
 	}
 	if err = store.SetLimits(maxEvents, maxQueryEvents); err != nil {
+		log.Fatal(err)
+	}
+	auditRetentionDays, err := positiveEnvInt("PULSE_AUDIT_RETENTION_DAYS", "PRODUCT_ANALYTICS_AUDIT_RETENTION_DAYS", analytics.DefaultAuditRetentionDays)
+	if err != nil {
+		log.Fatal(err)
+	}
+	tokenRetentionDays, err := positiveEnvInt("PULSE_REVOKED_TOKEN_RETENTION_DAYS", "PRODUCT_ANALYTICS_REVOKED_TOKEN_RETENTION_DAYS", analytics.DefaultTokenRetentionDays)
+	if err != nil {
 		log.Fatal(err)
 	}
 	if *importFile != "" {
@@ -90,6 +108,7 @@ func main() {
 	httpServer := &http.Server{Addr: *addr, Handler: s.routes(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 * 1024}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	go retentionWorker(ctx, store, auditRetentionDays, tokenRetentionDays)
 	go func() {
 		<-ctx.Done()
 		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -101,11 +120,45 @@ func main() {
 		log.Fatal(err)
 	}
 }
+
+func retentionWorker(ctx context.Context, store *analytics.Store, auditRetentionDays, tokenRetentionDays int) {
+	run := func() {
+		deleted, err := store.PurgeAllExpired()
+		if err != nil {
+			log.Printf("Retention cleanup failed: %v", err)
+			return
+		}
+		if deleted > 0 {
+			log.Printf("Retention cleanup removed %d expired events", deleted)
+		}
+		now := time.Now().UTC()
+		audits, tokens, err := store.PurgeWorkspaceHistory(now.AddDate(0, 0, -auditRetentionDays), now.AddDate(0, 0, -tokenRetentionDays))
+		if err != nil {
+			log.Printf("Workspace history cleanup failed: %v", err)
+			return
+		}
+		if audits > 0 || tokens > 0 {
+			log.Printf("Workspace history cleanup removed %d audit rows and %d revoked tokens", audits, tokens)
+		}
+	}
+	run()
+	ticker := time.NewTicker(24 * time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			run()
+		}
+	}
+}
 func (s *server) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/login", s.login)
 	mux.HandleFunc("POST /api/logout", func(w http.ResponseWriter, r *http.Request) {
 		http.SetCookie(w, &http.Cookie{Name: "pulse_admin", Value: "", Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: s.secure})
+		http.SetCookie(w, &http.Cookie{Name: "product_analytics_admin", Value: "", Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: s.secure})
 		respond(w, 200, map[string]bool{"ok": true})
 	})
 	mux.HandleFunc("/capture", s.capture)
@@ -133,7 +186,7 @@ func (s *server) routes() http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
 		w.Header().Set("X-Frame-Options", "DENY")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; form-action 'self'; base-uri 'none'; object-src 'none'")
 		if strings.HasPrefix(r.URL.Path, "/api/") {
 			w.Header().Set("Cache-Control", "no-store")
 		}
@@ -147,6 +200,22 @@ func databaseError(w http.ResponseWriter, err error) {
 	}
 	if errors.Is(err, analytics.ErrQueryEventLimit) {
 		fail(w, http.StatusRequestEntityTooLarge, "This query matches too many events. Narrow the date range or increase the configured query limit with matching capacity.")
+		return
+	}
+	if errors.Is(err, analytics.ErrEventBytesLimit) {
+		fail(w, http.StatusRequestEntityTooLarge, "Event properties are too large.")
+		return
+	}
+	if errors.Is(err, analytics.ErrQueryBytesLimit) {
+		fail(w, http.StatusRequestEntityTooLarge, "This query contains too much event data. Narrow the date range.")
+		return
+	}
+	if errors.Is(err, analytics.ErrCollaborationLimit) {
+		fail(w, http.StatusRequestEntityTooLarge, "This collection is too large. Delete unused items before listing more.")
+		return
+	}
+	if errors.Is(err, analytics.ErrWorkspaceLimit) {
+		fail(w, http.StatusTooManyRequests, "Workspace capacity reached. Delete unused projects or allow revoked-token cleanup to complete.")
 		return
 	}
 	log.Printf("Database operation failed: %v", err)
@@ -175,6 +244,52 @@ func decode(w http.ResponseWriter, r *http.Request, v any) error {
 func (s *server) valid(token string) bool {
 	return subtle.ConstantTimeCompare([]byte(token), []byte(s.token)) == 1
 }
+
+func tokenHash(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
+
+func principalFrom(r *http.Request) principal {
+	p, _ := r.Context().Value(principalContextKey{}).(principal)
+	return p
+}
+
+func roleRank(role string) int {
+	switch role {
+	case "owner":
+		return 3
+	case "editor":
+		return 2
+	case "viewer":
+		return 1
+	default:
+		return 0
+	}
+}
+
+func requireRole(w http.ResponseWriter, r *http.Request, minimum string) bool {
+	if roleRank(principalFrom(r).Role) < roleRank(minimum) {
+		fail(w, http.StatusForbidden, "Your role does not allow this action.")
+		return false
+	}
+	return true
+}
+
+func (s *server) authenticate(token string) (principal, bool, error) {
+	if s.valid(token) {
+		return principal{ID: "owner", Name: "Administrator", Role: "owner"}, true, nil
+	}
+	if token == "" {
+		return principal{}, false, nil
+	}
+	member, ok, err := s.store.AuthenticateAccessToken(tokenHash(token))
+	if err != nil || !ok {
+		return principal{}, ok, err
+	}
+	return principal{ID: member.ID, Name: member.Name, Role: member.Role}, true, nil
+}
+
 func (s *server) auth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !s.secure && !loopbackRequest(r) {
@@ -188,7 +303,12 @@ func (s *server) auth(next http.Handler) http.Handler {
 		if c, err := r.Cookie("product_analytics_admin"); err == nil && token == "" {
 			token = c.Value
 		}
-		if !s.valid(token) {
+		actor, ok, err := s.authenticate(token)
+		if err != nil {
+			databaseError(w, err)
+			return
+		}
+		if !ok {
 			fail(w, 401, "Sign in with your admin token to continue.")
 			return
 		}
@@ -196,7 +316,7 @@ func (s *server) auth(next http.Handler) http.Handler {
 			fail(w, 403, "Cross-origin admin requests are not allowed")
 			return
 		}
-		next.ServeHTTP(w, r)
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalContextKey{}, actor)))
 	})
 }
 func sameOrigin(r *http.Request) bool {
@@ -219,12 +339,17 @@ func (s *server) login(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "Invalid JSON")
 		return
 	}
-	if !s.valid(input.Token) {
+	actor, ok, err := s.authenticate(input.Token)
+	if err != nil {
+		databaseError(w, err)
+		return
+	}
+	if !ok {
 		fail(w, 401, "That admin token is not valid.")
 		return
 	}
 	http.SetCookie(w, &http.Cookie{Name: "pulse_admin", Value: input.Token, Path: "/", MaxAge: 86400, HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: s.secure})
-	respond(w, 200, map[string]bool{"ok": true})
+	respond(w, 200, map[string]any{"ok": true, "user": actor})
 }
 func loopbackHost(hostport string) bool {
 	host := hostport
@@ -351,6 +476,9 @@ func (s *server) capture(w http.ResponseWriter, r *http.Request) {
 	respond(w, 202, map[string]int{"accepted": accepted})
 }
 func (s *server) api(w http.ResponseWriter, r *http.Request) {
+	if s.productAPI(w, r) {
+		return
+	}
 	if r.URL.Path == "/api/projects" {
 		switch r.Method {
 		case "GET":
@@ -361,6 +489,13 @@ func (s *server) api(w http.ResponseWriter, r *http.Request) {
 			}
 			respond(w, 200, projects)
 		case "POST", "PATCH":
+			minimum := "owner"
+			if r.Method == "PATCH" {
+				minimum = "editor"
+			}
+			if !requireRole(w, r, minimum) {
+				return
+			}
 			var v struct {
 				ID      string   `json:"id"`
 				Name    string   `json:"name"`
@@ -427,6 +562,7 @@ func (s *server) api(w http.ResponseWriter, r *http.Request) {
 		databaseError(w, err)
 		return
 	}
+	events = analytics.FilterProperties(analytics.CanonicalizeIdentity(events), r.URL.Query().Get("property"), r.URL.Query().Get("value"))
 	switch r.URL.Path {
 	case "/api/overview":
 		previous, err := s.store.Events(p.ID, from.Add(-to.Sub(from)), from)
@@ -434,6 +570,7 @@ func (s *server) api(w http.ResponseWriter, r *http.Request) {
 			databaseError(w, err)
 			return
 		}
+		previous = analytics.FilterProperties(analytics.CanonicalizeIdentity(previous), r.URL.Query().Get("property"), r.URL.Query().Get("value"))
 		recent := append([]analytics.Event{}, events...)
 		sort.Slice(recent, func(i, j int) bool { return recent[i].Timestamp.After(recent[j].Timestamp) })
 		if len(recent) > 8 {
@@ -459,10 +596,32 @@ func (s *server) api(w http.ResponseWriter, r *http.Request) {
 		}
 		sort.Slice(out, func(i, j int) bool { return out[i].Timestamp.After(out[j].Timestamp) })
 		total := len(out)
-		if len(out) > 500 {
-			out = out[:500]
+		page, err := positiveQueryInt(r, "page", 1, 1, 1_000_000)
+		if err != nil {
+			fail(w, http.StatusBadRequest, err.Error())
+			return
 		}
-		respond(w, 200, map[string]any{"events": out, "total": total, "names": analytics.Breakdown(events, "")})
+		pageSize, err := positiveQueryInt(r, "page_size", 50, 10, 100)
+		if err != nil {
+			fail(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		pages := (total + pageSize - 1) / pageSize
+		if pages == 0 {
+			pages = 1
+		}
+		if page > pages {
+			page = pages
+		}
+		start := (page - 1) * pageSize
+		end := start + pageSize
+		if start > total {
+			start = total
+		}
+		if end > total {
+			end = total
+		}
+		respond(w, 200, map[string]any{"events": out[start:end], "total": total, "page": page, "page_size": pageSize, "pages": pages, "names": analytics.Breakdown(events, "")})
 	case "/api/people":
 		respond(w, 200, analytics.People(events))
 	case "/api/funnel":
@@ -478,13 +637,30 @@ func (s *server) api(w http.ResponseWriter, r *http.Request) {
 			databaseError(w, err)
 			return
 		}
+		all = analytics.FilterProperties(analytics.CanonicalizeIdentity(all), r.URL.Query().Get("property"), r.URL.Query().Get("value"))
 		respond(w, 200, analytics.Retention(all, from, to))
+	case "/api/catalog":
+		respond(w, 200, analytics.Catalog(events))
+	case "/api/paths":
+		respond(w, 200, analytics.Paths(events))
 	case "/api/export":
 		w.Header().Set("Content-Disposition", "attachment; filename=pulse-events.json")
 		respond(w, 200, events)
 	default:
 		fail(w, 404, "Endpoint not found")
 	}
+}
+
+func positiveQueryInt(r *http.Request, name string, fallback, minimum, maximum int) (int, error) {
+	raw := strings.TrimSpace(r.URL.Query().Get(name))
+	if raw == "" {
+		return fallback, nil
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value < minimum || value > maximum {
+		return 0, fmt.Errorf("%s must be between %d and %d", name, minimum, maximum)
+	}
+	return value, nil
 }
 func filterEvents(events []analytics.Event, name string) []analytics.Event {
 	out := []analytics.Event{}

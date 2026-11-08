@@ -163,6 +163,10 @@ server {
 | `PULSE_SECURE_COOKIES` | `true` | Enforces `Secure` flag on cookies. Set `false` only on loopback development. |
 | `PULSE_MAX_EVENTS_PER_PROJECT` | `1000000` | Maximum stored events per project before rejecting writes with HTTP 429. |
 | `PULSE_MAX_QUERY_EVENTS` | `100000` | Upper limit on events loaded into memory per query (returns HTTP 413 if exceeded). |
+| `PULSE_AUDIT_RETENTION_DAYS` | `365` | Days to retain workspace audit entries before daily cleanup. |
+| `PULSE_REVOKED_TOKEN_RETENTION_DAYS` | `90` | Days to retain revoked access-token records before daily cleanup. |
+
+Workspaces are limited to 100 projects and 100 stored access-token records. Project origins are limited to 100 entries and 64 KiB of serialized JSON. These fixed safety ceilings are enforced transactionally in PostgreSQL across concurrent application instances.
 
 ### 5. Production Operations
 
@@ -180,8 +184,12 @@ On startup, Pulse automatically applies embedded SQL migrations from `internal/a
 
 | Table | Stored data |
 | --- | --- |
-| `projects` | Project IDs, names, public ingestion keys, allowed origins (`jsonb`), creation time, stored-event count |
+| `projects` | Project IDs, names, public ingestion keys, allowed origins (`jsonb`), retention policy, creation time, stored-event count |
 | `events` | Project, event ID/name, person/session IDs, timestamp, properties (`jsonb`) |
+| `access_tokens` | Hashed, revocable workspace tokens and viewer/editor/owner roles |
+| `saved_reports`, `dashboards` | Shared analysis configurations and dashboard composition |
+| `annotations`, `event_definitions`, `alerts` | Product context, governed tracking definitions, and metric alert rules |
+| `audit_log` | Administrative and collaboration changes |
 | `schema_migrations` | Applied migration versions and timestamps |
 
 The primary key `(project_id, id)` deduplicates events per product, across restarts and concurrent app instances. Foreign keys prevent orphan events. Indexes cover project/time, person/time, and event-name/time. Event batches and their project counters commit atomically. A transactionally enforced per-project quota defaults to 1,000,000 stored events and serializes concurrent writers across app instances. Every analytics read comes from PostgreSQL, so one app instance can immediately read events written by another.
@@ -195,7 +203,7 @@ SELECT event, count(*) FROM events GROUP BY event ORDER BY count(*) DESC;
 SELECT version, applied_at FROM schema_migrations ORDER BY version;
 ```
 
-Back up PostgreSQL with your normal database backup tooling, such as `pg_dump`. The environment file contains credentials, not event data. Analytics calculations load selected events into Go, and retention reads prior event history, but each query is capped at 100,000 events by default to bound process memory. For larger volumes, move aggregation and retention computation into SQL or an analytics database and add pagination. Automatic expiry, deletion, and compaction policies are not implemented.
+Back up PostgreSQL with your normal database backup tooling, such as `pg_dump`. The environment file contains credentials, not event data. Analytics calculations load selected events into Go, and retention reads prior event history, but each query is capped at 100,000 events by default to bound process memory. For larger volumes, move aggregation and retention computation into SQL or an analytics database and add pagination. Per-project retention is enforced on startup and every 24 hours; owners can also purge expired data immediately or fulfill a person-level deletion request from project settings.
 
 Capacity controls are configured with `PULSE_MAX_EVENTS_PER_PROJECT` and `PULSE_MAX_QUERY_EVENTS`. Both must be positive integers. Increase them only with matching PostgreSQL storage, process memory, ingress budgets, monitoring, and recovery capacity. The storage quota is enforced transactionally across concurrent app instances; requests beyond it return HTTP 429. Analytics queries beyond the in-memory limit return HTTP 413 and should be narrowed.
 
@@ -223,8 +231,15 @@ After import, product integrations keep using the same project keys and `/captur
 - Searchable event explorer, captured properties, user timelines, and a 15-second refresh.
 - Configurable ordered funnels with a 7-day conversion window and drop-off guidance.
 - Daily retention cohorts based on each person's first event across the full project history.
+- Exact-property segments shared by overview, events, people, funnels, retention, and paths.
+- Journey paths, funnel person/drop-off drill-downs, and server-shared saved analyses.
+- Tracking health with event definitions, identity/session coverage, and property-type drift warnings.
+- Light, dark, and system-preferred themes.
 - People explorer, JSON export, setup guide, browser SDK, and Go client.
-- Token-protected administrator APIs, HTTP-only SameSite session cookies, same-origin write checks, and security headers.
+- Shared dashboards, timeline annotations, governed event definitions, and metric alert configuration.
+- Owner/editor/viewer access, hashed revocable tokens, audit history, and role-aware controls.
+- Retention enforcement, person deletion, ingestion-key rotation, project deletion, and export controls.
+- Token-protected APIs, HTTP-only SameSite session cookies, same-origin write checks, and security headers.
 
 ## Connect a browser product
 
@@ -241,7 +256,7 @@ Create a project and allow exact origins, such as `https://app.example.com` and 
 
 The SDK tracks the initial page view; call `pulse.page()` after SPA navigation. It buffers events and flushes every 5 seconds or at 20 events. It uses local storage for the distinct ID, session storage for sessions (30-minute inactivity window), and no cookies. It retries network/server failures in memory, bounds the queue at 500, and attempts a beacon on page exit. Delivery is best effort. It respects Do Not Track by default. `pulse.optOut()` clears the queue and disables collection; `pulse.optIn()` reenables it. Call `pulse.reset()` on logout. Configure your product's CSP to allow scripts and connections to your analytics host.
 
-`identify` changes the identity for future events and emits `$identify`; it does not retroactively merge anonymous activity. People properties reflect their most recent event. Do not send sensitive data you do not need. Public ingestion keys are write-only, not secrets or proof of a trusted sender. The administrator token grants access to all projects on the instance.
+`identify` changes the identity for future events and emits `$identify` with the previous anonymous ID. Pulse uses that link to merge earlier anonymous activity into reports when both identities are present in the queried history. People properties reflect their most recent event. Do not send sensitive data you do not need. Public ingestion keys are write-only, not secrets or proof of a trusted sender. The administrator token grants access to all projects on the instance.
 
 ## Send backend events
 
@@ -288,6 +303,8 @@ Administrator endpoints require `Authorization: Bearer <PULSE_ADMIN_TOKEN>` or a
 | POST | `/capture` | Public project-key ingestion |
 | POST | `/api/login` | Exchange `{"token":"..."}` for an administrator cookie |
 | POST | `/api/logout` | Clear the cookie |
+| GET | `/api/me` | Current workspace identity and role |
+| GET/POST/DELETE | `/api/access-tokens` | List, issue, or revoke role-based workspace access (owner) |
 | GET | `/api/projects` | List projects and ingestion keys |
 | POST | `/api/projects` | Create with `{"name":"...","origins":["https://..."]}` |
 | PATCH | `/api/projects` | Update with `{"id":"prj_...","name":"...","origins":[...]}` |
@@ -296,7 +313,16 @@ Administrator endpoints require `Authorization: Bearer <PULSE_ADMIN_TOKEN>` or a
 | GET | `/api/people` | People active in the selected period |
 | GET | `/api/funnel` | Repeat `step` 2–8 times for ordered conversion |
 | GET | `/api/retention` | Daily cohorts with day 0 through day 7 retention |
+| GET | `/api/paths` | Most common consecutive event transitions and unique people |
+| GET | `/api/catalog` | Event definitions, tracking coverage, and schema warnings |
 | GET | `/api/export` | All events for the project and date range |
+| GET/POST/DELETE | `/api/reports` | Shared saved analyses |
+| GET/POST/DELETE | `/api/dashboards` | Shared dashboard definitions |
+| GET/POST/DELETE | `/api/annotations` | Timeline context for releases and incidents |
+| GET/PATCH | `/api/event-definitions` | Govern event names, ownership, status, and expected properties |
+| GET/POST/DELETE | `/api/alerts` | Metric alert rules |
+| PATCH/POST/DELETE | `/api/project-policy` | Retention, key rotation, privacy deletion, and project deletion |
+| GET | `/api/audit` | Recent administrative activity (owner) |
 
 Funnel users count once per step; qualifying events must be in range and complete in order within seven days of step one. Sessions are distinct `(distinct_id, session_id)` pairs, excluding missing session IDs. Users are distinct IDs, not verified people. Retention measures exact-day returns. Database read failures return 503 rather than empty analytics or a new-install status.
 
@@ -318,4 +344,4 @@ TEST_DATABASE_URL='postgres://test_user:password@127.0.0.1:5432/product_analytic
 
 Tests create uniquely named schemas and drop only those schemas afterward. The test user needs permission to create schemas. Tests cover migrations, persisted data after reconnects, project isolation, concurrent duplicate ingestion, transaction rollback, repeatable legacy import, database failures, and first-install onboarding state. Docker Compose needs separate verification when the Docker daemon is available.
 
-Team accounts/roles, session replay, feature flags, automatic identity merging, and saved reports are not implemented.
+Session replay, feature flags, experiments, scheduled alert delivery, and digest delivery are intentionally not included yet. Alert rules are persisted for an external evaluator, but this release does not send email, Slack, or webhook notifications. Large-volume SQL-native aggregation and paginated event browsing also remain scale work; current reads retain the configured 100,000-event safety cap.

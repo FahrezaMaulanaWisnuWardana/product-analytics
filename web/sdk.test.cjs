@@ -14,6 +14,7 @@ test('tracks a page, identifies future activity, excludes URL query and referrer
  const e=environment();e.pulse.init('pk_test',{host:'https://analytics.example/'});e.pulse.identify('u1',{plan:'Pro'});e.pulse.capture('project_created');await e.pulse.flush();
  assert.equal(e.requests.length,1);assert.equal(e.requests[0].url,'https://analytics.example/capture');
  const events=e.requests[0].body.events;assert.equal(events.length,3);assert.equal(events[0].event,'$pageview');assert.equal(events[0].distinct_id,'id-1');assert.equal(events[1].distinct_id,'u1');assert.equal(events[2].distinct_id,'u1');assert.equal(events[0].properties.$referrer,'https://search.example');assert.equal(events[0].properties.$pathname,'/dashboard');
+ assert.equal(events[1].properties.$anon_distinct_id,'id-1');
 });
 test('preserves the distinct ID stored by the pre-Pulse SDK',async()=>{
  const e=environment('0',{'productAnalytics:pk_legacy:id':'legacy-user'});e.pulse.init('pk_legacy',{pageview:false});e.pulse.capture('continued');await e.pulse.flush();

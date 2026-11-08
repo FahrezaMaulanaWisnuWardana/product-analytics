@@ -9,6 +9,7 @@
   <script src="/app.js" defer></script>
 </head>
 <body>
+  <button id="theme-toggle" class="icon-button theme-toggle" type="button" aria-label="Use dark mode" title="Use dark mode">☾</button>
 
   <!-- ========================================================================
        1. Welcome & Onboarding View
@@ -131,12 +132,17 @@
         <a href="#events" data-view="events"><span data-icon="events"></span> <span data-i18n="nav_events">Events</span> <span class="live-dot"></span></a>
         <a href="#funnels" data-view="funnels"><span data-icon="funnels"></span> <span data-i18n="nav_funnels">Funnels</span></a>
         <a href="#retention" data-view="retention"><span data-icon="retention"></span> <span data-i18n="nav_retention">Retention</span></a>
+        <a href="#paths" data-view="paths"><span data-icon="arrow"></span> <span>Paths</span></a>
         <a href="#people" data-view="people"><span data-icon="people"></span> <span data-i18n="nav_people">People</span></a>
+        <a href="#saved" data-view="saved"><span data-icon="grid"></span> <span>Saved analyses</span></a>
+        <a href="#workspace" data-view="workspace"><span data-icon="settings"></span> <span>Workspace</span></a>
       </nav>
 
       <div class="nav-label build-label" data-i18n="build_with">BUILD WITH PULSE</div>
       <nav>
+        <a href="#guide" data-view="guide"><span data-icon="help"></span> <span>How to use Pulse</span></a>
         <a href="#setup" data-view="setup"><span data-icon="code"></span> <span data-i18n="nav_setup">Set up tracking</span> <span class="tiny-arrow">↗</span></a>
+        <a href="#health" data-view="health"><span data-icon="clock"></span> <span>Tracking health</span></a>
         <a href="#settings" data-view="settings"><span data-icon="settings"></span> <span data-i18n="nav_settings">Project settings</span></a>
       </nav>
 
@@ -195,6 +201,7 @@
             <p id="page-subtitle">See what’s happening. Understand what’s working.</p>
           </div>
           <div class="heading-actions">
+            <button id="save-view" class="button"><span data-icon="plus"></span> Save analysis</button>
             <button id="refresh" class="button"><span data-icon="refresh"></span> <span data-i18n="refresh">Refresh</span></button>
             <button id="new-project" class="button primary"><span data-icon="plus"></span> <span data-i18n="new_project">New project</span></button>
           </div>
@@ -205,7 +212,9 @@
           <div class="toolbar-left">
             <span class="project-chip"><i></i><span id="chip-name">Acme Web</span></span>
             <span class="toolbar-divider"></span>
-            <span class="muted small" data-i18n="all_users">All users</span>
+            <label class="segment-field"><span>Property</span><input id="segment-property" placeholder="plan" autocomplete="off"></label>
+            <label class="segment-field"><span>Value</span><input id="segment-value" placeholder="Pro" autocomplete="off"></label>
+            <button id="clear-segment" class="text-button" type="button" hidden>Clear segment</button>
           </div>
           <div class="toolbar-right">
             <span data-icon="calendar"></span>
