@@ -28,9 +28,10 @@ import (
 )
 
 type server struct {
-	store  *analytics.Store
-	token  string
-	secure bool
+	store   *analytics.Store
+	token   string
+	secure  bool
+	country *countryLookup
 }
 
 type principal struct {
@@ -105,7 +106,14 @@ func main() {
 			log.Fatal(err)
 		}
 	}
-	s := &server{store: store, token: token, secure: secure}
+	country, err := openCountryLookup(strings.TrimSpace(os.Getenv("PULSE_GEOIP_DATABASE")), os.Getenv("PULSE_TRUSTED_PROXIES"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	if country != nil {
+		defer country.db.Close()
+	}
+	s := &server{store: store, token: token, secure: secure, country: country}
 	httpServer := &http.Server{Addr: *addr, Handler: s.routes(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 * 1024}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -485,6 +493,12 @@ func (s *server) capture(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now().UTC()
+	// A server-side batch may describe other people, so only infer location for
+	// browser requests. IP addresses are never added to events or logs here.
+	country := ""
+	if origin != "" {
+		country = s.country.country(r)
+	}
 	for i := range input.Events {
 		e := &input.Events[i]
 		e.Name = strings.TrimSpace(e.Name)
@@ -508,6 +522,9 @@ func (s *server) capture(w http.ResponseWriter, r *http.Request) {
 		e.ProjectID = p.ID
 		if e.Properties == nil {
 			e.Properties = map[string]any{}
+		}
+		if country != "" {
+			e.Properties["$country"] = country
 		}
 	}
 	accepted, err := s.store.AddBatch(input.Events)
@@ -664,7 +681,7 @@ func (s *server) api(w http.ResponseWriter, r *http.Request) {
 		if len(recent) > 8 {
 			recent = recent[:8]
 		}
-		respond(w, 200, map[string]any{"metrics": analytics.Measure(events), "previous": analytics.Measure(previous), "decision": analytics.Decision(events), "series": analytics.Series(events, from, to), "top_events": analytics.Breakdown(events, ""), "pages": analytics.Breakdown(filterEvents(events, "$pageview"), "$pathname"), "browsers": analytics.Breakdown(events, "$browser"), "recent": recent, "from": from, "to": to})
+		respond(w, 200, map[string]any{"metrics": analytics.Measure(events), "previous": analytics.Measure(previous), "decision": analytics.Decision(events), "series": analytics.Series(events, from, to), "top_events": analytics.Breakdown(events, ""), "pages": analytics.Breakdown(filterEvents(events, "$pageview"), "$pathname"), "browsers": analytics.Breakdown(events, "$browser"), "countries": analytics.Breakdown(events, "$country"), "recent": recent, "from": from, "to": to})
 	case "/api/events":
 		name := r.URL.Query().Get("event")
 		person := r.URL.Query().Get("person")

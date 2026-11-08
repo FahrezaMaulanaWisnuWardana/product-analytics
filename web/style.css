@@ -2497,3 +2497,89 @@ dialog .wide {
 .journey-node.selected { background:#4c8d6b; border-color:#4c8d6b; color:white; }
 .journey-node:focus-visible { outline:3px solid #7eb692; outline-offset:2px; }
 .journey-foot { padding:0 20px 20px; }
+.journey-heading { gap: 20px; align-items: flex-start; }
+.journey-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; }
+.journey-controls label { display: flex; align-items: center; gap: 8px; margin: 0; color: var(--ink); font-weight: 600; }
+.journey-controls select { min-height: 34px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); }
+.journey-controls small { color: var(--muted); }
+.journey-instructions { margin: 20px 20px 0; padding: 16px 18px; border: 1px solid var(--line); border-radius: 8px; background: var(--soft); line-height: 1.6; }
+.journey-instructions p { margin: 5px 0; }
+.journey-instructions span { color: var(--muted); font-size: 11px; }
+.journey-direction { display: flex; justify-content: space-between; gap: 12px; margin: 22px 20px 0; padding-bottom: 8px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 11px; }
+.journey-direction span:nth-child(2), .journey-column h3 span { color: var(--green); font-weight: 600; }
+@media (max-width: 700px) { .journey-heading { flex-wrap: wrap; } .journey-controls { width: 100%; } .journey-direction span:last-child { display: none; } .journey-columns { grid-auto-columns: minmax(210px, 75%); } }
+
+/* Keep composite controls and their fields on the same dark surface. */
+[data-theme="dark"] .search,
+[data-theme="dark"] .toolbar-right,
+[data-theme="dark"] .project-chip {
+  background: #12202a;
+  color: var(--ink);
+  border-color: #344550;
+}
+[data-theme="dark"] .search input {
+  background: transparent;
+  color: var(--ink);
+}
+[data-theme="dark"] .section-tools select {
+  background: #12202a;
+  color: var(--ink);
+  border-color: #344550;
+}
+[data-theme="dark"] input::placeholder,
+[data-theme="dark"] textarea::placeholder { color: #aab9b3; opacity: 1; }
+[data-theme="dark"] .search:focus-within { border-color: var(--focus); }
+[data-theme="dark"] .toolbar-divider { border-color: var(--line); }
+
+/* Match the compact, unframed filter row used by the light theme. */
+[data-theme="dark"] .toolbar { background: transparent; }
+.toolbar .segment-field,
+.topbar .language-control { margin: 0; }
+[data-theme="dark"] .language-control select {
+  background-color: #12202a;
+  color: var(--ink);
+  border-color: #344550;
+}
+[data-theme="dark"] .language-control { color: var(--muted); }
+[data-theme="dark"] .topbar-right .icon-button {
+  background: transparent;
+  color: var(--muted);
+}
+
+/* Align the workspace controls on a shared rhythm. */
+.topbar-right { gap: 16px; padding-right: 48px; }
+.language-control { gap: 8px; white-space: nowrap; }
+.language-control select { min-height: 34px; padding: 0 28px 0 10px; }
+.topbar-right .icon-button {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+}
+.theme-toggle { top: 19px; right: 20px; box-shadow: none; border-radius: 7px; }
+.toolbar {
+  gap: 16px;
+  flex-wrap: wrap;
+  min-height: 40px;
+  margin-bottom: 22px;
+}
+.toolbar-left { flex: 1 1 auto; flex-wrap: wrap; gap: 12px; }
+.toolbar-right { flex: 0 0 auto; min-height: 36px; padding: 0 10px; }
+.project-chip { min-height: 36px; padding: 0 11px; white-space: nowrap; }
+.toolbar-divider { height: 22px; }
+.segment-field { gap: 8px; grid-template-columns: auto minmax(95px, 130px); }
+.segment-field input { min-height: 36px; }
+.toolbar-right select { min-height: 34px; }
+@media (max-width: 900px) {
+  .segment-field { grid-template-columns: minmax(90px, 130px); }
+}
+@media (max-width: 600px) {
+  .topbar-right { gap: 8px; padding-right: 42px; }
+  .topbar-right .icon-button { width: 32px; height: 32px; }
+  .theme-toggle { top: 13px; right: 12px; width: 32px; height: 32px; }
+  .toolbar { align-items: flex-start; gap: 10px; }
+  .toolbar-left { gap: 8px; }
+  .toolbar-divider { display: none; }
+  .toolbar-right { margin-left: 0; }
+}

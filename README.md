@@ -165,6 +165,8 @@ server {
 | `PULSE_MAX_QUERY_EVENTS` | `100000` | Upper limit on events loaded into memory per query (returns HTTP 413 if exceeded). |
 | `PULSE_AUDIT_RETENTION_DAYS` | `365` | Days to retain workspace audit entries before daily cleanup. |
 | `PULSE_REVOKED_TOKEN_RETENTION_DAYS` | `90` | Days to retain revoked access-token records before daily cleanup. |
+| `PULSE_GEOIP_DATABASE` | Disabled | Path to a local MaxMind-compatible country `.mmdb` database. |
+| `PULSE_TRUSTED_PROXIES` | None | Comma-separated CIDR ranges of proxies allowed to provide `X-Forwarded-For`. |
 
 Workspaces are limited to 100 projects and 100 stored access-token records. Project origins are limited to 100 entries and 64 KiB of serialized JSON. These fixed safety ceilings are enforced transactionally in PostgreSQL across concurrent application instances.
 
@@ -206,6 +208,12 @@ SELECT version, applied_at FROM schema_migrations ORDER BY version;
 Back up PostgreSQL with your normal database backup tooling, such as `pg_dump`. The environment file contains credentials, not event data. Analytics calculations load selected events into Go, and retention reads prior event history, but each query is capped at 100,000 events by default to bound process memory. For larger volumes, move aggregation and retention computation into SQL or an analytics database and add pagination. Per-project retention is enforced on startup and every 24 hours; owners can also purge expired data immediately or fulfill a person-level deletion request from project settings.
 
 Capacity controls are configured with `PULSE_MAX_EVENTS_PER_PROJECT` and `PULSE_MAX_QUERY_EVENTS`. Both must be positive integers. Increase them only with matching PostgreSQL storage, process memory, ingress budgets, monitoring, and recovery capacity. The storage quota is enforced transactionally across concurrent app instances; requests beyond it return HTTP 429. Analytics queries beyond the in-memory limit return HTTP 413 and should be narrowed.
+
+### Country tracking
+
+Country tracking is optional. Obtain and maintain a MaxMind-compatible country database, such as GeoLite2 Country, and set `PULSE_GEOIP_DATABASE` to its `.mmdb` path before starting Pulse. The database must be readable by the Pulse process; for Docker, mount it read-only and use its path inside the container. For a reverse proxy, set `PULSE_TRUSTED_PROXIES` to the precise CIDR ranges of your own proxies and configure them to sanitize forwarded headers. Never trust arbitrary clients or a broad public network. Direct connections use their peer address. Only browser capture requests are inferred; backend events may describe other people and need an explicit `$country` property if known.
+
+Pulse uses the address in memory to look up a two-letter country code and stores the code in `$country`, not the address. Unknown, private, or unresolvable addresses remain unknown; local development typically cannot resolve a country. Historical events are not backfilled. Country is an estimate and VPNs or proxies can affect accuracy. This does not control IP addresses in reverse-proxy access logs or data that an integration explicitly sends in event properties; configure those separately. Restart Pulse after updating the database file.
 
 ## Import your existing JSONL data
 
