@@ -331,6 +331,27 @@ func insertEvents(ctx context.Context, tx *sql.Tx, events []Event, maxEventsPerP
 	}
 	return count, nil
 }
+
+// FunnelSuggestions searches a bounded sample of recent project activity.
+func (s *Store) FunnelSuggestions(project, kind, search string) ([]string, error) {
+	ctx, cancel := timeout()
+	defer cancel()
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT value FROM (SELECT CASE WHEN $2 = 'page' THEN CASE WHEN event = '$pageview' THEN properties->>'$pathname' END ELSE event END AS value FROM events WHERE project_id=$1 ORDER BY occurred_at DESC LIMIT 10000) recent WHERE value IS NOT NULL AND value <> '' AND length(value) <= 500 AND position(lower($3) in lower(value)) > 0 ORDER BY value LIMIT 50`, project, kind, search)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	values := []string{}
+	for rows.Next() {
+		var value string
+		if err := rows.Scan(&value); err != nil {
+			return nil, err
+		}
+		values = append(values, value)
+	}
+	return values, rows.Err()
+}
+
 func (s *Store) Events(project string, from, to time.Time) ([]Event, error) {
 	ctx, cancel := timeout()
 	defer cancel()

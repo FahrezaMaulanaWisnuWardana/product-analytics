@@ -43,6 +43,39 @@ func TestEventQuotaAndQueryLimit(t *testing.T) {
 	}
 }
 
+func TestFunnelSuggestionsAreProjectScopedAndSearchable(t *testing.T) {
+	s, err := Open(testdb.URL(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	p, err := s.CreateProject("Suggestions", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := s.CreateProject("Other", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	_, err = s.AddBatch([]Event{
+		{ID: "a", ProjectID: p.ID, Name: "$pageview", DistinctID: "u", Timestamp: now, Properties: map[string]any{"$pathname": "/Pricing"}},
+		{ID: "b", ProjectID: p.ID, Name: "signup_completed", DistinctID: "u", Timestamp: now},
+		{ID: "c", ProjectID: other.ID, Name: "$pageview", DistinctID: "u", Timestamp: now, Properties: map[string]any{"$pathname": "/private"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pages, err := s.FunnelSuggestions(p.ID, "page", "PRI")
+	if err != nil || len(pages) != 1 || pages[0] != "/Pricing" {
+		t.Fatalf("pages: %v, %v", pages, err)
+	}
+	events, err := s.FunnelSuggestions(p.ID, "event", "signup")
+	if err != nil || len(events) != 1 || events[0] != "signup_completed" {
+		t.Fatalf("events: %v, %v", events, err)
+	}
+}
+
 func TestEventPropertiesByteLimit(t *testing.T) {
 	s, err := Open(testdb.URL(t))
 	if err != nil {

@@ -657,6 +657,20 @@ func (s *server) api(w http.ResponseWriter, r *http.Request) {
 		fail(w, 404, "Project not found")
 		return
 	}
+	if r.URL.Path == "/api/funnels/suggestions" {
+		kind, search := r.URL.Query().Get("type"), r.URL.Query().Get("q")
+		if (kind != "page" && kind != "event") || len(search) > 500 {
+			fail(w, 400, "Invalid suggestion query")
+			return
+		}
+		values, err := s.store.FunnelSuggestions(p.ID, kind, search)
+		if err != nil {
+			databaseError(w, err)
+			return
+		}
+		respond(w, 200, values)
+		return
+	}
 	from, to, err := dateRange(r)
 	if err != nil {
 		fail(w, 400, err.Error())

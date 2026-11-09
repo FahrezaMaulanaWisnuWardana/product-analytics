@@ -63,26 +63,21 @@ func JourneyMaxDepth(events []Event) int {
 }
 
 func sequenceStart(sequence, prefix []string) int {
-	if len(prefix) == 0 {
-		return 0
+	if len(prefix) > len(sequence) {
+		return -1
 	}
-	for i := 0; i+len(prefix) <= len(sequence); i++ {
-		match := true
-		for j, step := range prefix {
-			if sequence[i+j] != step {
-				match = false
-				break
-			}
-		}
-		if match {
-			return i
+	// Selection filters the displayed path; it must not move its starting point
+	// to a later occurrence and include people absent from the original count.
+	for i, step := range prefix {
+		if sequence[i] != step {
+			return -1
 		}
 	}
-	return -1
+	return 0
 }
 
 // Journey counts distinct people following the selected prefix, with each
-// person's first matching sequence counted once.
+// person's path anchored to their first observed step in the query range.
 func Journey(events []Event, selected []string, depth, limit int) JourneyResult {
 	sequences := journeySequences(events)
 	maxDepth := 0
