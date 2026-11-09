@@ -78,7 +78,7 @@ func sequenceStart(sequence, prefix []string) int {
 
 // Journey counts distinct people following the selected prefix, with each
 // person's path anchored to their first observed step in the query range.
-func Journey(events []Event, selected []string, depth, limit int) JourneyResult {
+func Journey(events []Event, selected []string, depth int) JourneyResult {
 	sequences := journeySequences(events)
 	maxDepth := 0
 	for _, sequence := range sequences {
@@ -121,9 +121,6 @@ func Journey(events []Event, selected []string, depth, limit int) JourneyResult 
 			}
 			return x.People > y.People
 		})
-		if len(result.Columns[i].Nodes) > limit {
-			result.Columns[i].Nodes = result.Columns[i].Nodes[:limit]
-		}
 	}
 	for i, counts := range edges {
 		for key, n := range counts {

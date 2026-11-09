@@ -786,7 +786,7 @@ func (s *server) api(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		respond(w, 200, analytics.Journey(events, selected, depth, 12))
+		respond(w, 200, analytics.Journey(events, selected, depth))
 	case "/api/export":
 		w.Header().Set("Content-Disposition", "attachment; filename=pulse-events.json")
 		respond(w, 200, events)

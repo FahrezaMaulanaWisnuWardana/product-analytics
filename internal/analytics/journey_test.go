@@ -6,6 +6,27 @@ import (
 	"time"
 )
 
+func TestJourneyIncludesAllChoices(t *testing.T) {
+	var events []Event
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	for person := 0; person < 30; person++ {
+		for step, name := range []string{"start", fmt.Sprintf("choice-%02d", person)} {
+			events = append(events, Event{ID: fmt.Sprintf("%d-%d", person, step), Name: name, DistinctID: fmt.Sprint(person), Timestamp: base.Add(time.Duration(step) * time.Minute)})
+		}
+	}
+	for _, selected := range [][]string{nil, {"event:start"}} {
+		result := Journey(events, selected, 3)
+		if len(result.Columns[1].Nodes) != 30 || result.Columns[1].People != 30 {
+			t.Fatalf("expected all 30 choices: %+v", result.Columns[1])
+		}
+		for i, node := range result.Columns[1].Nodes {
+			if node.ID != fmt.Sprintf("event:choice-%02d", i) || node.People != 1 {
+				t.Fatalf("unexpected choice order or count: %+v", node)
+			}
+		}
+	}
+}
+
 func TestJourneySelectionDoesNotReanchorCounts(t *testing.T) {
 	var events []Event
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -31,9 +52,9 @@ func TestJourneySelectionDoesNotReanchorCounts(t *testing.T) {
 		}
 		return 0
 	}
-	unselected := Journey(events, nil, 3, 12)
-	selected := Journey(events, []string{"event:profiles"}, 3, 12)
-	continued := Journey(events, []string{"event:profiles", "event:details"}, 3, 12)
+	unselected := Journey(events, nil, 3)
+	selected := Journey(events, []string{"event:profiles"}, 3)
+	continued := Journey(events, []string{"event:profiles", "event:details"}, 3)
 	for _, result := range []JourneyResult{unselected, selected, continued} {
 		if got := count(result, 0, "event:profiles"); got != 21 {
 			t.Fatalf("profiles count = %d, want 21", got)
@@ -45,7 +66,7 @@ func TestJourneySelectionDoesNotReanchorCounts(t *testing.T) {
 	if got := count(continued, 1, "event:details"); got != 21 {
 		t.Fatalf("selected details count = %d, want 21", got)
 	}
-	reanchored := Journey(events, []string{"event:profiles", "event:export"}, 3, 12)
+	reanchored := Journey(events, []string{"event:profiles", "event:export"}, 3)
 	if reanchored.Columns[1].People != 0 {
 		t.Fatalf("later repeated path was counted: %+v", reanchored.Columns[1])
 	}

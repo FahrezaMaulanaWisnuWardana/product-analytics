@@ -152,11 +152,11 @@ func TestJourneyFollowsSelectedSequence(t *testing.T) {
 		{ID: "3", Name: "$pageview", DistinctID: "b", Timestamp: now, Properties: map[string]any{"$pathname": "/"}},
 		{ID: "4", Name: "browse", DistinctID: "b", Timestamp: now.Add(time.Minute)},
 	}
-	result := Journey(events, []string{"page:/"}, 3, 12)
+	result := Journey(events, []string{"page:/"}, 3)
 	if result.MaxDepth != 2 || result.Columns[0].People != 2 || result.Columns[1].People != 2 || len(result.Columns[1].Nodes) != 2 {
 		t.Fatalf("unexpected journey: %+v", result)
 	}
-	result = Journey(events, []string{"page:/", "event:signup"}, 3, 12)
+	result = Journey(events, []string{"page:/", "event:signup"}, 3)
 	if result.Columns[0].People != 2 || result.Columns[1].People != 1 || result.Columns[1].Nodes[0].ID != "event:signup" {
 		t.Fatalf("unexpected selected journey: %+v", result)
 	}
@@ -186,7 +186,7 @@ func TestJourneySelectedStepsKeepProgressiveCounts(t *testing.T) {
 		{ID: "5", Name: "signup", DistinctID: "b", Timestamp: now.Add(time.Minute)},
 		{ID: "6", Name: "pricing", DistinctID: "c", Timestamp: now},
 	}
-	result := Journey(events, []string{"event:pricing", "event:signup", "event:created"}, 3, 12)
+	result := Journey(events, []string{"event:pricing", "event:signup", "event:created"}, 3)
 	if result.Columns[0].People != 3 || result.Columns[1].People != 2 || result.Columns[2].People != 1 {
 		t.Fatalf("selected counts should narrow at each step: %+v", result.Columns)
 	}
