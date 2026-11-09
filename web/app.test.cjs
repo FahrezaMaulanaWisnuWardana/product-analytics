@@ -56,3 +56,56 @@ test('decision brief renders decision guidance in Indonesian',()=>{
  assert.match(html,/Kesiapan sampel/);
  assert.match(html,/Periksa Feature used/);
 });
+
+const journeySource=source.slice(source.indexOf('function journeyColumn'),source.indexOf("\ndocument.addEventListener('submit'",source.indexOf('function journeyColumn')));
+async function renderJourney(data,selection=[],lang='en',person=''){
+ const sandbox={data,selection,lang,person,URLSearchParams};
+ vm.runInNewContext(`
+  const state={lang};let journeySelection=selection,journeyDepth=3,journeyPerson=person,paths;
+  const params=()=>new URLSearchParams();const query=p=>p;
+  const api=async url=>url.startsWith('/api/journey')?data:[];
+  const fmt=n=>String(n||0);
+  const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  ${journeySource}
+  result=paths();
+ `,sandbox);
+ return sandbox.result;
+}
+const journeyData={max_depth:3,columns:[
+ {people:10,nodes:[{id:'page:/pricing',type:'page',label:'/pricing',people:10}]},
+ {people:8,nodes:[{id:'event:signup',type:'event',label:'signup',people:8}]},
+ {people:5,nodes:[{id:'event:created',type:'event',label:'created',people:5}]}
+]};
+
+test('journeys hide unrelated later actions until the previous step is chosen',async()=>{
+ const html=await renderJourney(journeyData);
+ assert.match(html,/First observed step/);
+ assert.match(html,/Choose step 1 to see what comes next/);
+ assert.doesNotMatch(html,/data-journey-id="event:signup"/);
+ assert.match(html,/Journeys can continue across sessions/);
+});
+
+test('journeys reveal the selected continuation with distinct-person percentages and endings',async()=>{
+ const html=await renderJourney(journeyData,['page:/pricing']);
+ assert.match(html,/data-journey-id="event:signup"/);
+ assert.doesNotMatch(html,/data-journey-id="event:created"/);
+ assert.match(html,/80%/);
+ assert.match(html,/2 people have no next action recorded/);
+ assert.match(html,/aria-label="Selected journey"/);
+ assert.match(html,/After <strong>\/pricing<\/strong>/);
+});
+
+test('journeys offer recovery when a selected path has no matching activity',async()=>{
+ const html=await renderJourney({max_depth:0,columns:[{people:0,nodes:[]}]},['page:/old']);
+ assert.match(html,/No activity in this view/);
+ assert.match(html,/Clear selected path/);
+ assert.doesNotMatch(html,/class="journey-columns"/);
+});
+
+test('journeys localize guidance and escape person and selected-step labels',async()=>{
+ const html=await renderJourney(journeyData,['page:<script>'],'id','<user>');
+ assert.match(html,/Langkah pertama yang tercatat/);
+ assert.match(html,/&lt;script&gt;/);
+ assert.match(html,/&lt;user&gt;/);
+ assert.doesNotMatch(html,/<script>|<user>/);
+});

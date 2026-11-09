@@ -17,7 +17,7 @@ migrate:
 test:
 	go test ./...
 	go vet ./...
-	node --test web/sdk.test.cjs
+	node --test web/sdk.test.cjs web/app.test.cjs
 
 integration-test:
 	@test -n "$$TEST_DATABASE_URL" || (echo 'Set TEST_DATABASE_URL to a disposable PostgreSQL database'; exit 1)
