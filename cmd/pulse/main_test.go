@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -437,5 +438,52 @@ func TestDatabaseOutageDoesNotMasqueradeAsFirstInstall(t *testing.T) {
 	w := request(h, "POST", "/api/projects", `{"name":"During outage"}`, "", "test-admin")
 	if w.Code != 503 {
 		t.Fatal(w.Code, w.Body.String())
+	}
+}
+
+func TestJourneyPersonFilter(t *testing.T) {
+	s, h := testServer(t)
+	p, err := s.store.CreateProject("Individual journeys", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Now().UTC().Add(-time.Hour)
+	events := []analytics.Event{
+		{ID: "anon", ProjectID: p.ID, Name: "$pageview", DistinctID: "anonymous", Timestamp: base, Properties: map[string]any{"$pathname": "/home"}},
+		{ID: "identify", ProjectID: p.ID, Name: "$identify", DistinctID: "user & 1", Timestamp: base.Add(time.Minute), Properties: map[string]any{"$anon_distinct_id": "anonymous"}},
+		{ID: "signup", ProjectID: p.ID, Name: "signup", DistinctID: "user & 1", Timestamp: base.Add(2 * time.Minute)},
+		{ID: "other", ProjectID: p.ID, Name: "other-user-only", DistinctID: "user-2", Timestamp: base},
+	}
+	if _, err := s.store.AddBatch(events); err != nil {
+		t.Fatal(err)
+	}
+	endpoint := "/api/journey?project=" + p.ID + "&from=" + base.Format("2006-01-02") + "&to=" + base.Add(24*time.Hour).Format("2006-01-02")
+	for _, tc := range []struct {
+		name, query   string
+		people, depth int
+	}{
+		{"all", "", 2, 3},
+		{"identified", "&person=" + url.QueryEscape("user & 1"), 1, 3},
+		{"other", "&person=user-2", 1, 1},
+		{"missing", "&person=missing", 0, 0},
+		{"selection", "&person=" + url.QueryEscape("user & 1") + "&selected=page:/home", 1, 3},
+		{"mismatched selection", "&person=user-2&selected=page:/home", 0, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := request(h, "GET", endpoint+tc.query, "", "", "test-admin")
+			if w.Code != http.StatusOK {
+				t.Fatalf("%d %s", w.Code, w.Body.String())
+			}
+			var result analytics.JourneyResult
+			if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+				t.Fatal(err)
+			}
+			if result.Columns[0].People != tc.people || result.MaxDepth != tc.depth {
+				t.Fatalf("unexpected journey: %+v", result)
+			}
+			if tc.name == "identified" && (result.Columns[0].Nodes[0].ID != "page:/home" || result.Columns[2].Nodes[0].ID != "event:signup") {
+				t.Fatalf("linked activity missing: %+v", result)
+			}
+		})
 	}
 }

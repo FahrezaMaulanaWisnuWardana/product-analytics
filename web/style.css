@@ -2583,3 +2583,7 @@ dialog .wide {
   .toolbar-divider { display: none; }
   .toolbar-right { margin-left: 0; }
 }
+
+.journey-person-filter { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 0; }
+.journey-person-filter input { width: 220px; max-width: 100%; min-height: 34px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); }
+.journey-scope { margin: 16px 20px 0; overflow-wrap: anywhere; color: var(--muted); }

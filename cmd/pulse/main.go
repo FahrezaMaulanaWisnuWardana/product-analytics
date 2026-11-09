@@ -763,6 +763,15 @@ func (s *server) api(w http.ResponseWriter, r *http.Request) {
 	case "/api/paths":
 		respond(w, 200, analytics.Paths(events))
 	case "/api/journey":
+		if person := r.URL.Query().Get("person"); person != "" {
+			filtered := []analytics.Event{}
+			for _, event := range events {
+				if event.DistinctID == person {
+					filtered = append(filtered, event)
+				}
+			}
+			events = filtered
+		}
 		maxDepth := analytics.JourneyMaxDepth(events)
 		if maxDepth < 3 {
 			maxDepth = 3
