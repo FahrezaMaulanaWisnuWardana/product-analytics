@@ -89,6 +89,23 @@ func TestSavedTypedFunnelAPI(t *testing.T) {
 		t.Fatalf("invalid operator accepted: %d", w.Code)
 	}
 }
+
+func TestJourneyAllowsSelectingLastDisplayedStep(t *testing.T) {
+	s, h := testServer(t)
+	p, err := s.store.CreateProject("Journey", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := "/api/journey?project=" + p.ID + "&steps=3&selected=event:a&selected=event:b&selected=event:c"
+	if w := request(h, "GET", path, "", "", "test-admin"); w.Code != http.StatusOK {
+		t.Fatalf("last step rejected: %d %s", w.Code, w.Body.String())
+	}
+	path += "&selected=event:d"
+	if w := request(h, "GET", path, "", "", "test-admin"); w.Code != http.StatusBadRequest {
+		t.Fatalf("selection beyond displayed depth accepted: %d", w.Code)
+	}
+}
+
 func TestInsecureAdminAccessIsLoopbackOnly(t *testing.T) {
 	s, _ := testServer(t)
 	s.secure = false

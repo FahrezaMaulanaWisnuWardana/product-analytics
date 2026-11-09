@@ -120,12 +120,42 @@ func TestJourneyFollowsSelectedSequence(t *testing.T) {
 		{ID: "4", Name: "browse", DistinctID: "b", Timestamp: now.Add(time.Minute)},
 	}
 	result := Journey(events, []string{"page:/"}, 3, 12)
-	if result.Columns[0].People != 2 || result.Columns[1].People != 2 || len(result.Columns[1].Nodes) != 2 {
+	if result.MaxDepth != 2 || result.Columns[0].People != 2 || result.Columns[1].People != 2 || len(result.Columns[1].Nodes) != 2 {
 		t.Fatalf("unexpected journey: %+v", result)
 	}
 	result = Journey(events, []string{"page:/", "event:signup"}, 3, 12)
-	if result.Columns[0].People != 1 || result.Columns[1].Nodes[0].ID != "event:signup" {
+	if result.Columns[0].People != 2 || result.Columns[1].People != 1 || result.Columns[1].Nodes[0].ID != "event:signup" {
 		t.Fatalf("unexpected selected journey: %+v", result)
+	}
+}
+
+func TestJourneyMaxDepthUsesLongestProjectPath(t *testing.T) {
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	events := []Event{
+		{ID: "1", Name: "view", DistinctID: "a", Timestamp: now},
+		{ID: "2", Name: "view", DistinctID: "a", Timestamp: now.Add(time.Minute)},
+		{ID: "3", Name: "signup", DistinctID: "a", Timestamp: now.Add(2 * time.Minute)},
+		{ID: "4", Name: "pay", DistinctID: "a", Timestamp: now.Add(3 * time.Minute)},
+		{ID: "5", Name: "view", DistinctID: "b", Timestamp: now},
+	}
+	if got := JourneyMaxDepth(events); got != 3 {
+		t.Fatalf("max depth = %d, want 3", got)
+	}
+}
+
+func TestJourneySelectedStepsKeepProgressiveCounts(t *testing.T) {
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	events := []Event{
+		{ID: "1", Name: "pricing", DistinctID: "a", Timestamp: now},
+		{ID: "2", Name: "signup", DistinctID: "a", Timestamp: now.Add(time.Minute)},
+		{ID: "3", Name: "created", DistinctID: "a", Timestamp: now.Add(2 * time.Minute)},
+		{ID: "4", Name: "pricing", DistinctID: "b", Timestamp: now},
+		{ID: "5", Name: "signup", DistinctID: "b", Timestamp: now.Add(time.Minute)},
+		{ID: "6", Name: "pricing", DistinctID: "c", Timestamp: now},
+	}
+	result := Journey(events, []string{"event:pricing", "event:signup", "event:created"}, 3, 12)
+	if result.Columns[0].People != 3 || result.Columns[1].People != 2 || result.Columns[2].People != 1 {
+		t.Fatalf("selected counts should narrow at each step: %+v", result.Columns)
 	}
 }
 

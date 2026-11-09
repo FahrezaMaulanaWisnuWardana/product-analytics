@@ -21,13 +21,12 @@ type JourneyEdge struct {
 	People int    `json:"people"`
 }
 type JourneyResult struct {
-	Columns []JourneyColumn `json:"columns"`
-	Edges   [][]JourneyEdge `json:"edges"`
+	Columns  []JourneyColumn `json:"columns"`
+	Edges    [][]JourneyEdge `json:"edges"`
+	MaxDepth int             `json:"max_depth"`
 }
 
-// Journey counts distinct people following the selected prefix, with each
-// person's first matching sequence counted once.
-func Journey(events []Event, selected []string, depth, limit int) JourneyResult {
+func journeySequences(events []Event) map[string][]string {
 	sorted := append([]Event(nil), events...)
 	sort.SliceStable(sorted, func(i, j int) bool {
 		if sorted[i].Timestamp.Equal(sorted[j].Timestamp) {
@@ -48,7 +47,51 @@ func Journey(events []Event, selected []string, depth, limit int) JourneyResult 
 			sequences[e.DistinctID] = append(seq, key)
 		}
 	}
-	result := JourneyResult{Columns: make([]JourneyColumn, depth), Edges: make([][]JourneyEdge, depth-1)}
+	return sequences
+}
+
+// JourneyMaxDepth returns the longest observed path in the current project
+// and query range after consecutive duplicate steps have been collapsed.
+func JourneyMaxDepth(events []Event) int {
+	maxDepth := 0
+	for _, sequence := range journeySequences(events) {
+		if len(sequence) > maxDepth {
+			maxDepth = len(sequence)
+		}
+	}
+	return maxDepth
+}
+
+func sequenceStart(sequence, prefix []string) int {
+	if len(prefix) == 0 {
+		return 0
+	}
+	for i := 0; i+len(prefix) <= len(sequence); i++ {
+		match := true
+		for j, step := range prefix {
+			if sequence[i+j] != step {
+				match = false
+				break
+			}
+		}
+		if match {
+			return i
+		}
+	}
+	return -1
+}
+
+// Journey counts distinct people following the selected prefix, with each
+// person's first matching sequence counted once.
+func Journey(events []Event, selected []string, depth, limit int) JourneyResult {
+	sequences := journeySequences(events)
+	maxDepth := 0
+	for _, sequence := range sequences {
+		if len(sequence) > maxDepth {
+			maxDepth = len(sequence)
+		}
+	}
+	result := JourneyResult{Columns: make([]JourneyColumn, depth), Edges: make([][]JourneyEdge, depth-1), MaxDepth: maxDepth}
 	nodes := make([]map[string]int, depth)
 	edges := make([]map[string]int, depth-1)
 	for i := range nodes {
@@ -58,27 +101,12 @@ func Journey(events []Event, selected []string, depth, limit int) JourneyResult 
 		edges[i] = map[string]int{}
 	}
 	for _, seq := range sequences {
-		start := 0
-		if len(selected) > 0 {
-			start = -1
-			for i := 0; i+len(selected) <= len(seq); i++ {
-				match := true
-				for j, s := range selected {
-					if seq[i+j] != s {
-						match = false
-						break
-					}
-				}
-				if match {
-					start = i
-					break
-				}
-			}
-			if start < 0 {
+		for i := 0; i < depth; i++ {
+			prefixLength := min(i+1, len(selected))
+			start := sequenceStart(seq, selected[:prefixLength])
+			if start < 0 || start+i >= len(seq) {
 				continue
 			}
-		}
-		for i := 0; i < depth && start+i < len(seq); i++ {
 			result.Columns[i].People++
 			nodes[i][seq[start+i]]++
 			if i > 0 {

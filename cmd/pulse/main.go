@@ -749,13 +749,20 @@ func (s *server) api(w http.ResponseWriter, r *http.Request) {
 	case "/api/paths":
 		respond(w, 200, analytics.Paths(events))
 	case "/api/journey":
-		depth, err := positiveQueryInt(r, "steps", 3, 3, 7)
+		maxDepth := analytics.JourneyMaxDepth(events)
+		if maxDepth < 3 {
+			maxDepth = 3
+		}
+		depth, err := positiveQueryInt(r, "steps", 3, 3, int(^uint(0)>>1))
 		if err != nil {
 			fail(w, 400, err.Error())
 			return
 		}
+		if depth > maxDepth {
+			depth = maxDepth
+		}
 		selected := r.URL.Query()["selected"]
-		if len(selected) >= depth {
+		if len(selected) > depth {
 			fail(w, 400, "Too many selected steps")
 			return
 		}
