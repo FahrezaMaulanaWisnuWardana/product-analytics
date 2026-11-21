@@ -64,6 +64,101 @@ func TestAdminAuthAndLogin(t *testing.T) {
 	}
 }
 
+func TestAdminSessionIsRevocable(t *testing.T) {
+	s, h := testServer(t)
+	w := request(h, "POST", "/api/login", `{"token":"test-admin"}`, "", "")
+	if w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	cookies := w.Result().Cookies()
+	if len(cookies) != 1 || cookies[0].Value == "test-admin" || cookies[0].Value == "" {
+		t.Fatal("login cookie must contain a session, not the admin token")
+	}
+	hash := tokenHash(cookies[0].Value)
+	if ok, err := s.store.AuthenticateAdminSession(hash); err != nil || !ok {
+		t.Fatal("session was not stored", ok, err)
+	}
+	r := httptest.NewRequest("GET", "/api/projects", nil)
+	r.AddCookie(cookies[0])
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, r)
+	if rec.Code != 200 {
+		t.Fatal("session cookie did not authenticate", rec.Code)
+	}
+	logout := httptest.NewRequest("POST", "/api/logout", nil)
+	logout.Header.Set("Origin", "https://example.com")
+	logout.AddCookie(cookies[0])
+	lo := httptest.NewRecorder()
+	h.ServeHTTP(lo, logout)
+	if lo.Code != 200 {
+		t.Fatal("logout rejected", lo.Code)
+	}
+	if ok, err := s.store.AuthenticateAdminSession(hash); err != nil || ok {
+		t.Fatal("session was not revoked", ok, err)
+	}
+	after := httptest.NewRequest("GET", "/api/projects", nil)
+	after.AddCookie(cookies[0])
+	rec2 := httptest.NewRecorder()
+	h.ServeHTTP(rec2, after)
+	if rec2.Code != 401 {
+		t.Fatal("revoked session still authenticated", rec2.Code)
+	}
+}
+
+func TestRateLimiterAndMetrics(t *testing.T) {
+	l := newRateLimiter(2)
+	if !l.allow("a") || !l.allow("a") || l.allow("a") {
+		t.Fatal("fixed-window limit not enforced")
+	}
+	if !l.allow("b") {
+		t.Fatal("separate keys share a bucket")
+	}
+	var disabled *rateLimiter
+	if !disabled.allow("any") || !newRateLimiter(0).allow("any") {
+		t.Fatal("nil/zero limiter must allow requests")
+	}
+	s, h := testServer(t)
+	s.metrics = &metricsState{requests: map[string]int64{}}
+	w := request(h, "GET", "/metrics", "", "", "test-admin")
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "pulse_requests_total") {
+		t.Fatalf("metrics endpoint: %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestSameOriginChecksSchemeAndLogoutOrigin(t *testing.T) {
+	s, _ := testServer(t)
+	r := httptest.NewRequest("POST", "https://analytics.example.com/api/projects", nil)
+	for origin, want := range map[string]bool{
+		"https://analytics.example.com": true,
+		"http://analytics.example.com":  false,
+		"https://evil.example":          false,
+		"":                              false,
+	} {
+		r.Header.Set("Origin", origin)
+		if got := s.sameOrigin(r); got != want {
+			t.Errorf("secure origin %q: got %v, want %v", origin, got, want)
+		}
+	}
+	s.secure = false
+	for origin, want := range map[string]bool{
+		"http://analytics.example.com":  true,
+		"https://analytics.example.com": false,
+	} {
+		r.Header.Set("Origin", origin)
+		if got := s.sameOrigin(r); got != want {
+			t.Errorf("insecure origin %q: got %v, want %v", origin, got, want)
+		}
+	}
+
+	_, h := testServer(t)
+	if w := request(h, "POST", "/api/logout", "", "https://evil.example", ""); w.Code != 403 {
+		t.Fatal("cross-origin logout accepted", w.Code)
+	}
+	if w := request(h, "POST", "/api/logout", "", "https://example.com", ""); w.Code != 200 {
+		t.Fatal("same-origin logout rejected", w.Code, w.Body.String())
+	}
+}
+
 func TestSavedTypedFunnelAPI(t *testing.T) {
 	s, h := testServer(t)
 	p, err := s.store.CreateProject("Funnels", nil)

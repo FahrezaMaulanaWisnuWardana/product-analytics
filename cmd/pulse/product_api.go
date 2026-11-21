@@ -184,6 +184,21 @@ func storeError(w http.ResponseWriter, err error) {
 	databaseError(w, err)
 }
 
+// writeMutationError preserves validation messages for client mistakes but
+// routes database failures through databaseError so raw driver text is never
+// returned to clients.
+func writeMutationError(w http.ResponseWriter, err error) {
+	if errors.Is(err, sql.ErrNoRows) || errors.Is(err, analytics.ErrProjectNotFound) {
+		fail(w, http.StatusNotFound, "Resource not found")
+		return
+	}
+	if analytics.IsDatabaseError(err) {
+		databaseError(w, err)
+		return
+	}
+	fail(w, http.StatusBadRequest, err.Error())
+}
+
 func (s *server) record(actor principal, action, project, target string, details map[string]any) {
 	if err := s.store.Audit(actor.Name, action, project, target, details); err != nil {
 		log.Printf("Audit write failed for %s: %v", action, err)
@@ -208,11 +223,7 @@ func (s *server) accessTokenAPI(w http.ResponseWriter, r *http.Request, actor pr
 		raw := analytics.ID("pulse_")
 		item, err := s.store.CreateAccessToken(input.Name, input.Role, tokenHash(raw))
 		if err != nil {
-			if errors.Is(err, analytics.ErrWorkspaceLimit) {
-				databaseError(w, err)
-				return
-			}
-			fail(w, http.StatusBadRequest, err.Error())
+			writeMutationError(w, err)
 			return
 		}
 		s.record(actor, "access_token.created", "", item.ID, map[string]any{"role": item.Role})
@@ -269,7 +280,7 @@ func (s *server) reportsAPI(w http.ResponseWriter, r *http.Request, actor princi
 				storeError(w, err)
 				return
 			}
-			fail(w, 400, err.Error())
+			writeMutationError(w, err)
 			return
 		}
 		if r.Method == http.MethodPatch {
@@ -318,7 +329,7 @@ func (s *server) dashboardsAPI(w http.ResponseWriter, r *http.Request, actor pri
 		}
 		item, err := s.store.SaveDashboard(project, input.Name, actor.Name, input.ReportIDs)
 		if err != nil {
-			fail(w, 400, err.Error())
+			writeMutationError(w, err)
 			return
 		}
 		s.record(actor, "dashboard.created", project, item.ID, nil)
@@ -342,7 +353,16 @@ func (s *server) dashboardsAPI(w http.ResponseWriter, r *http.Request, actor pri
 func (s *server) annotationsAPI(w http.ResponseWriter, r *http.Request, actor principal, project string) {
 	switch r.Method {
 	case http.MethodGet:
-		from, to, err := dateRange(r)
+		p, ok, err := s.store.Project(project)
+		if err != nil {
+			databaseError(w, err)
+			return
+		}
+		if !ok {
+			fail(w, 404, "Project not found")
+			return
+		}
+		from, to, err := dateRange(r, projectLocation(p))
 		if err != nil {
 			fail(w, 400, err.Error())
 			return
@@ -368,7 +388,7 @@ func (s *server) annotationsAPI(w http.ResponseWriter, r *http.Request, actor pr
 		}
 		item, err := s.store.AddAnnotation(project, input.Title, input.Description, actor.Name, input.OccurredAt)
 		if err != nil {
-			fail(w, 400, err.Error())
+			writeMutationError(w, err)
 			return
 		}
 		s.record(actor, "annotation.created", project, item.ID, nil)
@@ -414,7 +434,7 @@ func (s *server) eventDefinitionsAPI(w http.ResponseWriter, r *http.Request, act
 	input.ProjectID = project
 	item, err := s.store.UpsertEventDefinition(input)
 	if err != nil {
-		fail(w, 400, err.Error())
+		writeMutationError(w, err)
 		return
 	}
 	s.record(actor, "event_definition.updated", project, item.Event, nil)
@@ -464,7 +484,7 @@ func (s *server) alertsAPI(w http.ResponseWriter, r *http.Request, actor princip
 	}
 	item, err := s.store.SaveAlert(input)
 	if err != nil {
-		fail(w, 400, err.Error())
+		writeMutationError(w, err)
 		return
 	}
 	s.record(actor, "alert.saved", project, item.ID, nil)
@@ -485,7 +505,7 @@ func (s *server) projectPolicyAPI(w http.ResponseWriter, r *http.Request, actor 
 		}
 		item, err := s.store.UpdateRetention(project, input.RetentionDays)
 		if err != nil {
-			fail(w, 400, err.Error())
+			writeMutationError(w, err)
 			return
 		}
 		s.record(actor, "project.retention_updated", project, project, map[string]any{"days": input.RetentionDays})

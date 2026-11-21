@@ -58,7 +58,19 @@ func Measure(events []Event) Metrics {
 	return m
 }
 
-func Decision(events []Event) DecisionContext {
+// DayKey returns the calendar day of t in loc.
+func DayKey(t time.Time, loc *time.Location) string {
+	return t.In(loc).Format("2006-01-02")
+}
+
+// DayStart returns local midnight of t's calendar day in loc. AddDate on the
+// result advances by calendar days, which keeps DST transitions correct.
+func DayStart(t time.Time, loc *time.Location) time.Time {
+	y, m, d := t.In(loc).Date()
+	return time.Date(y, m, d, 0, 0, 0, 0, loc)
+}
+
+func Decision(events []Event, loc *time.Location) DecisionContext {
 	result := DecisionContext{Readiness: "collecting"}
 	if len(events) == 0 {
 		return result
@@ -68,7 +80,7 @@ func Decision(events []Event) DecisionContext {
 	people := map[string]int{}
 	first, last := events[0].Timestamp, events[0].Timestamp
 	for _, e := range events {
-		days[e.Timestamp.UTC().Format("2006-01-02")] = true
+		days[DayKey(e.Timestamp, loc)] = true
 		people[e.DistinctID]++
 		if e.Timestamp.Before(first) {
 			first = e.Timestamp
@@ -79,8 +91,8 @@ func Decision(events []Event) DecisionContext {
 	}
 
 	result.ActiveDays = len(days)
-	result.FirstEvent = first.UTC().Format(time.RFC3339)
-	result.LastEvent = last.UTC().Format(time.RFC3339)
+	result.FirstEvent = first.In(loc).Format(time.RFC3339)
+	result.LastEvent = last.In(loc).Format(time.RFC3339)
 	if breakdown := Breakdown(events, ""); len(breakdown) > 0 {
 		result.TopEvent = breakdown[0]
 		result.TopEventShare = float64(breakdown[0].Count) * 100 / float64(len(events))
@@ -101,13 +113,13 @@ func Decision(events []Event) DecisionContext {
 	}
 	return result
 }
-func Series(events []Event, from, to time.Time) []Point {
+func Series(events []Event, from, to time.Time, loc *time.Location) []Point {
 	counts := map[string]int{}
 	users := map[string]map[string]bool{}
 	sessions := map[string]map[string]bool{}
 	pageviews := map[string]int{}
 	for _, e := range events {
-		k := e.Timestamp.UTC().Format("2006-01-02")
+		k := DayKey(e.Timestamp, loc)
 		counts[k]++
 		if users[k] == nil {
 			users[k] = map[string]bool{}
@@ -124,7 +136,7 @@ func Series(events []Event, from, to time.Time) []Point {
 		}
 	}
 	out := []Point{}
-	for d := from.UTC().Truncate(24 * time.Hour); d.Before(to); d = d.AddDate(0, 0, 1) {
+	for d := DayStart(from, loc); d.Before(to); d = d.AddDate(0, 0, 1) {
 		k := d.Format("2006-01-02")
 		out = append(out, Point{k, len(users[k]), counts[k], len(sessions[k]), pageviews[k]})
 	}
@@ -519,36 +531,61 @@ type Cohort struct {
 	Retained []*float64 `json:"retained"`
 }
 
-// Daily retention uses the person's first observed event in the project's complete history.
-func Retention(all []Event, from, to time.Time) []Cohort {
+// MaxRetentionDays bounds the number of day columns returned by Retention so a
+// wide or historical query cannot produce an unbounded response.
+const MaxRetentionDays = 366
+
+// Retention groups people by the day of their first-ever event and reports the
+// percentage active on each following day, up to observeUntil (normally "now").
+// Cohorts are limited to [from, to); observation continues past to when the
+// caller has loaded events through observeUntil, so older cohorts keep maturing.
+func Retention(all []Event, from, to, observeUntil time.Time, loc *time.Location) []Cohort {
 	first := map[string]time.Time{}
-	active := map[string]map[string]bool{}
+	activeByDay := map[string]map[string]bool{}
 	for _, e := range all {
-		d := e.Timestamp.UTC().Truncate(24 * time.Hour)
+		d := DayStart(e.Timestamp, loc)
 		if prev, ok := first[e.DistinctID]; !ok || d.Before(prev) {
 			first[e.DistinctID] = d
 		}
-		if active[e.DistinctID] == nil {
-			active[e.DistinctID] = map[string]bool{}
+		key := DayKey(e.Timestamp, loc)
+		if activeByDay[key] == nil {
+			activeByDay[key] = map[string]bool{}
 		}
-		active[e.DistinctID][d.Format("2006-01-02")] = true
+		activeByDay[key][e.DistinctID] = true
 	}
+	// Bucket members once by first day instead of rescanning every person for
+	// every cohort day.
+	membersByDay := map[string][]string{}
+	for id, d := range first {
+		key := DayKey(d, loc)
+		membersByDay[key] = append(membersByDay[key], id)
+	}
+
+	fromDay := DayStart(from, loc)
+	maxDays := 0
+	for d := fromDay; d.Before(observeUntil); d = d.AddDate(0, 0, 1) {
+		maxDays++
+	}
+	if maxDays < 1 {
+		maxDays = 1
+	}
+	if maxDays > MaxRetentionDays {
+		maxDays = MaxRetentionDays
+	}
+
 	out := []Cohort{}
-	for day := from.UTC().Truncate(24 * time.Hour); day.Before(to); day = day.AddDate(0, 0, 1) {
-		members := []string{}
-		for id, d := range first {
-			if d.Equal(day) {
-				members = append(members, id)
-			}
-		}
-		c := Cohort{Date: day.Format("2006-01-02"), Size: len(members), Retained: []*float64{}}
-		for n := 0; n < 8; n++ {
+	for day := fromDay; day.Before(to); day = day.AddDate(0, 0, 1) {
+		key := DayKey(day, loc)
+		members := membersByDay[key]
+		c := Cohort{Date: key, Size: len(members), Retained: make([]*float64, 0, maxDays)}
+		for n := 0; n < maxDays; n++ {
 			d := day.AddDate(0, 0, n)
 			var pct *float64
-			if d.Before(to) && len(members) > 0 {
+			if d.Before(observeUntil) && len(members) > 0 {
+				active := activeByDay[DayKey(d, loc)]
 				count := 0
 				for _, id := range members {
-					if active[id][d.Format("2006-01-02")] {
+					if active[id] {
 						count++
 					}
 				}

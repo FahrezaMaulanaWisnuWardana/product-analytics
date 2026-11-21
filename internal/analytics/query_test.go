@@ -256,11 +256,58 @@ func TestRetentionUsesFirstEverEventAndUnobservedDays(t *testing.T) {
 		{DistinctID: "new", Timestamp: start.Add(24 * time.Hour)},
 		{DistinctID: "other", Timestamp: start},
 	}
-	r := Retention(events, start, start.Add(48*time.Hour))
-	if r[0].Size != 2 || *r[0].Retained[0] != 100 || *r[0].Retained[1] != 50 || r[0].Retained[2] != nil {
+	r := Retention(events, start, start.Add(48*time.Hour), start.Add(48*time.Hour), time.UTC)
+	if r[0].Size != 2 || len(r[0].Retained) != 2 || *r[0].Retained[0] != 100 || *r[0].Retained[1] != 50 {
 		t.Fatalf("unexpected retention: %+v", r[0])
 	}
 }
+func TestRetentionObservesAllDaysUntilNow(t *testing.T) {
+	start := at("2026-10-01T00:00:00Z")
+	events := []Event{
+		{DistinctID: "a", Timestamp: start},
+		{DistinctID: "a", Timestamp: start.AddDate(0, 0, 5)},
+		{DistinctID: "a", Timestamp: start.AddDate(0, 0, 9)},
+	}
+	// The cohort window is a single day, but observation continues for 10 days.
+	r := Retention(events, start, start.AddDate(0, 0, 1), start.AddDate(0, 0, 10).Add(time.Hour), time.UTC)
+	if len(r) != 1 || len(r[0].Retained) != 11 {
+		t.Fatalf("unexpected cohort count or columns: %+v", r)
+	}
+	for n, want := range map[int]float64{0: 100, 5: 100, 9: 100, 10: 0} {
+		got := r[0].Retained[n]
+		if got == nil || *got != want {
+			t.Fatalf("day %d: got %v, want %v", n, got, want)
+		}
+	}
+}
+func TestDayBucketingUsesProjectTimezone(t *testing.T) {
+	loc, err := time.LoadLocation("Asia/Jakarta")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 20:00 UTC is 03:00 the next day in Jakarta (UTC+7).
+	events := []Event{
+		{DistinctID: "a", Timestamp: at("2026-10-01T20:00:00Z")},
+		{DistinctID: "a", Timestamp: at("2026-10-02T20:00:00Z")},
+	}
+	from := time.Date(2026, 10, 2, 0, 0, 0, 0, loc)
+	to := from.AddDate(0, 0, 3)
+	series := Series(events, from, to, loc)
+	if len(series) != 3 || series[0].Date != "2026-10-02" || series[0].Users != 1 || series[1].Users != 1 {
+		t.Fatalf("series did not use local days: %+v", series)
+	}
+	cohorts := Retention(events, from, from.AddDate(0, 0, 1), to, loc)
+	if len(cohorts) != 1 || cohorts[0].Date != "2026-10-02" || cohorts[0].Size != 1 {
+		t.Fatalf("retention did not use local days: %+v", cohorts)
+	}
+	if cohorts[0].Retained[0] == nil || *cohorts[0].Retained[0] != 100 || cohorts[0].Retained[1] == nil || *cohorts[0].Retained[1] != 100 {
+		t.Fatalf("retention did not observe the local next day: %+v", cohorts[0])
+	}
+	if DayKey(at("2026-10-01T20:00:00Z"), time.UTC) != "2026-10-01" {
+		t.Fatal("UTC bucketing unexpectedly changed")
+	}
+}
+
 func TestMeasureAndSeries(t *testing.T) {
 	start := at("2026-10-01T00:00:00Z")
 	events := []Event{{Name: "$pageview", DistinctID: "a", SessionID: "same", Timestamp: start}, {Name: "click", DistinctID: "a", SessionID: "same", Timestamp: start}, {Name: "click", DistinctID: "b", SessionID: "same", Timestamp: start}}
@@ -268,7 +315,7 @@ func TestMeasureAndSeries(t *testing.T) {
 	if m.Users != 2 || m.Events != 3 || m.Sessions != 2 || m.Pageviews != 1 {
 		t.Fatalf("metrics: %+v", m)
 	}
-	series := Series(events, start, start.Add(48*time.Hour))
+	series := Series(events, start, start.Add(48*time.Hour), time.UTC)
 	if len(series) != 2 || series[0].Users != 2 || series[1].Events != 0 || series[0].Pageviews != 1 || series[0].Sessions != 2 {
 		t.Fatalf("series: %+v", series)
 	}
@@ -282,7 +329,7 @@ func TestDecisionContextReadinessAndConcentration(t *testing.T) {
 		{Name: "detail_viewed", DistinctID: "b", Timestamp: start.Add(2 * time.Minute)},
 		{Name: "signed_up", DistinctID: "c", Timestamp: start.Add(3 * time.Minute)},
 	}
-	d := Decision(events)
+	d := Decision(events, time.UTC)
 	if d.Readiness != "collecting" || d.ActiveDays != 1 {
 		t.Fatalf("readiness: %+v", d)
 	}
@@ -300,7 +347,7 @@ func TestDecisionContextReadySample(t *testing.T) {
 	for i := 0; i < 30; i++ {
 		events = append(events, Event{Name: "active", DistinctID: fmt.Sprintf("user-%d", i), Timestamp: start.AddDate(0, 0, i%7)})
 	}
-	if d := Decision(events); d.Readiness != "ready" || d.ActiveDays != 7 {
+	if d := Decision(events, time.UTC); d.Readiness != "ready" || d.ActiveDays != 7 {
 		t.Fatalf("expected ready sample: %+v", d)
 	}
 }
@@ -325,7 +372,7 @@ func TestStorePersistenceIsolationAndProjectUpdate(t *testing.T) {
 	if added, err := s.Add(e); added || err != nil {
 		t.Fatal("duplicate accepted", err)
 	}
-	if _, err = s.UpdateProject(p.ID, "Renamed", []string{"https://two.example"}); err != nil {
+	if _, err = s.UpdateProject(p.ID, "Renamed", []string{"https://two.example"}, "UTC"); err != nil {
 		t.Fatal(err)
 	}
 	if err = s.Close(); err != nil {

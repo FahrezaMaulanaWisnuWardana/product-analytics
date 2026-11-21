@@ -24,6 +24,7 @@ type Project struct {
 	Origins       []string  `json:"origins"`
 	CreatedAt     time.Time `json:"created_at"`
 	RetentionDays int       `json:"retention_days"`
+	Timezone      string    `json:"timezone"`
 }
 type Event struct {
 	ID         string         `json:"id"`
@@ -63,12 +64,40 @@ var (
 	ErrWorkspaceLimit  = errors.New("workspace capacity limit reached")
 )
 
-func mapWorkspaceLimit(err error) error {
+const (
+	sqlstateRaiseException       = "P0001"
+	sqlstateProgramLimitExceeded = "54011"
+)
+
+// mapDatabaseError converts database constraint errors into sentinel errors so
+// handlers can return a stable, safe message instead of raw driver text.
+func mapDatabaseError(err error) error {
 	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) && pgErr.Code == "P0001" {
-		return fmt.Errorf("%w: %s", ErrWorkspaceLimit, pgErr.Message)
+	if !errors.As(err, &pgErr) {
+		return err
 	}
-	return err
+	switch pgErr.Code {
+	case sqlstateRaiseException:
+		return ErrWorkspaceLimit
+	case sqlstateProgramLimitExceeded:
+		return ErrCollaborationLimit
+	default:
+		return err
+	}
+}
+
+// IsDatabaseError reports whether an error came from the database driver or a
+// mapped capacity sentinel. Handlers use it to return a safe message instead of
+// exposing raw driver text to clients.
+func IsDatabaseError(err error) bool {
+	if errors.Is(err, ErrWorkspaceLimit) || errors.Is(err, ErrCollaborationLimit) ||
+		errors.Is(err, ErrEventQuota) || errors.Is(err, ErrQueryEventLimit) ||
+		errors.Is(err, ErrEventBytesLimit) || errors.Is(err, ErrQueryBytesLimit) ||
+		errors.Is(err, ErrProjectNotFound) {
+		return true
+	}
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr)
 }
 
 //go:embed migrations/*.sql
@@ -159,12 +188,12 @@ func (s *Store) migrate(ctx context.Context) error {
 
 type scanner interface{ Scan(...any) error }
 
-const projectColumns = "id,name,api_key,origins,created_at,retention_days"
+const projectColumns = "id,name,api_key,origins,created_at,retention_days,timezone"
 
 func scanProject(row scanner) (Project, error) {
 	var p Project
 	var origins []byte
-	err := row.Scan(&p.ID, &p.Name, &p.Key, &origins, &p.CreatedAt, &p.RetentionDays)
+	err := row.Scan(&p.ID, &p.Name, &p.Key, &origins, &p.CreatedAt, &p.RetentionDays, &p.Timezone)
 	if err != nil {
 		return p, err
 	}
@@ -210,6 +239,19 @@ func (s *Store) find(column, value string) (Project, bool, error) {
 }
 func (s *Store) Project(id string) (Project, bool, error) { return s.find("id", id) }
 func (s *Store) ByKey(key string) (Project, bool, error)  { return s.find("api_key", key) }
+
+// ValidateTimezone accepts IANA location names (for example Asia/Jakarta).
+// "Local" is rejected because it depends on the server's environment.
+func ValidateTimezone(tz string) error {
+	if tz == "" || len(tz) > 64 || tz == "Local" {
+		return errors.New("choose a valid timezone such as UTC or Asia/Jakarta")
+	}
+	if _, err := time.LoadLocation(tz); err != nil {
+		return errors.New("choose a valid timezone such as UTC or Asia/Jakarta")
+	}
+	return nil
+}
+
 func projectValues(name string, origins []string) (string, []byte, error) {
 	name = strings.TrimSpace(name)
 	if name == "" || len(name) > 80 {
@@ -232,16 +274,19 @@ func (s *Store) CreateProject(name string, origins []string) (Project, error) {
 	ctx, cancel := timeout()
 	defer cancel()
 	p, err := scanProject(s.db.QueryRowContext(ctx, "INSERT INTO projects(id,name,api_key,origins,created_at) VALUES($1,$2,$3,$4,$5) RETURNING "+projectColumns, ID("prj_"), name, ID("pk_"), b, time.Now().UTC()))
-	return p, mapWorkspaceLimit(err)
+	return p, mapDatabaseError(err)
 }
-func (s *Store) UpdateProject(id, name string, origins []string) (Project, error) {
+func (s *Store) UpdateProject(id, name string, origins []string, timezone string) (Project, error) {
 	name, b, err := projectValues(name, origins)
 	if err != nil {
 		return Project{}, err
 	}
+	if err = ValidateTimezone(timezone); err != nil {
+		return Project{}, err
+	}
 	ctx, cancel := timeout()
 	defer cancel()
-	p, err := scanProject(s.db.QueryRowContext(ctx, "UPDATE projects SET name=$2,origins=$3 WHERE id=$1 RETURNING "+projectColumns, id, name, b))
+	p, err := scanProject(s.db.QueryRowContext(ctx, "UPDATE projects SET name=$2,origins=$3,timezone=$4 WHERE id=$1 RETURNING "+projectColumns, id, name, b, timezone))
 	if errors.Is(err, sql.ErrNoRows) {
 		return p, ErrProjectNotFound
 	}

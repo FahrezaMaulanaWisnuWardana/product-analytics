@@ -1,4 +1,4 @@
-.PHONY: run demo test integration-test build db db-stop migrate
+.PHONY: run demo test integration-test build db db-stop migrate backup restore test-ci
 run:
 	./scripts/run.sh
 
@@ -26,3 +26,18 @@ integration-test:
 build:
 	mkdir -p bin
 	go build -trimpath -o bin/pulse ./cmd/pulse
+
+backup:
+	./scripts/backup.sh
+
+restore:
+	@test -n "$(BACKUP_FILE)" || (echo 'Usage: make restore BACKUP_FILE=backups/<file> CONFIRM=RESTORE'; exit 1)
+	./scripts/restore.sh "$(BACKUP_FILE)" "$(CONFIRM)"
+
+# Mirrors CI locally; pass TEST_DATABASE_URL to include the PostgreSQL integration tests.
+test-ci:
+	@if [ -n "$(TEST_DATABASE_URL)" ]; then export TEST_DATABASE_URL="$(TEST_DATABASE_URL)"; fi; \
+	go test ./... && \
+	go vet ./... && \
+	node --test web/sdk.test.cjs web/app.test.cjs && \
+	go test -race ./...

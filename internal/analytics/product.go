@@ -107,7 +107,7 @@ func (s *Store) CreateAccessToken(name, role, hash string) (AccessToken, error) 
 	defer cancel()
 	var out AccessToken
 	err := s.db.QueryRowContext(ctx, `INSERT INTO access_tokens(id,name,token_hash,role) VALUES($1,$2,$3,$4) RETURNING id,name,role,created_at,last_used_at,revoked_at`, ID("tok_"), name, hash, role).Scan(&out.ID, &out.Name, &out.Role, &out.CreatedAt, &out.LastUsedAt, &out.RevokedAt)
-	return out, mapWorkspaceLimit(err)
+	return out, mapDatabaseError(err)
 }
 
 func (s *Store) AuthenticateAccessToken(hash string) (AccessToken, bool, error) {
@@ -119,6 +119,38 @@ func (s *Store) AuthenticateAccessToken(hash string) (AccessToken, bool, error) 
 		return AccessToken{}, false, nil
 	}
 	return out, err == nil, err
+}
+
+func (s *Store) CreateAdminSession(id, hash string, expires time.Time) error {
+	ctx, cancel := timeout()
+	defer cancel()
+	_, err := s.db.ExecContext(ctx, `INSERT INTO admin_sessions(id,token_hash,expires_at) VALUES($1,$2,$3)`, id, hash, expires)
+	return mapDatabaseError(err)
+}
+
+func (s *Store) AuthenticateAdminSession(hash string) (bool, error) {
+	ctx, cancel := timeout()
+	defer cancel()
+	var exists bool
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM admin_sessions WHERE token_hash=$1 AND revoked_at IS NULL AND expires_at > now())`, hash).Scan(&exists)
+	return exists && err == nil, err
+}
+
+func (s *Store) RevokeAdminSession(hash string) error {
+	ctx, cancel := timeout()
+	defer cancel()
+	_, err := s.db.ExecContext(ctx, `UPDATE admin_sessions SET revoked_at=now() WHERE token_hash=$1 AND revoked_at IS NULL`, hash)
+	return err
+}
+
+func (s *Store) PurgeAdminSessions(before time.Time) (int64, error) {
+	ctx, cancel := timeout()
+	defer cancel()
+	res, err := s.db.ExecContext(ctx, `DELETE FROM admin_sessions WHERE expires_at < $1 OR revoked_at < $1`, before)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 func (s *Store) AccessTokens() ([]AccessToken, error) {
@@ -188,7 +220,8 @@ func (s *Store) SaveReport(project, name, reportType, actor string, config map[s
 	}
 	ctx, cancel := timeout()
 	defer cancel()
-	return scanReport(s.db.QueryRowContext(ctx, `INSERT INTO saved_reports(id,project_id,name,report_type,config,created_by) VALUES($1,$2,$3,$4,$5,$6) RETURNING id,project_id,name,report_type,config,created_by,created_at,updated_at`, ID("rpt_"), project, name, reportType, raw, actor))
+	item, err := scanReport(s.db.QueryRowContext(ctx, `INSERT INTO saved_reports(id,project_id,name,report_type,config,created_by) VALUES($1,$2,$3,$4,$5,$6) RETURNING id,project_id,name,report_type,config,created_by,created_at,updated_at`, ID("rpt_"), project, name, reportType, raw, actor))
+	return item, mapDatabaseError(err)
 }
 
 func (s *Store) Reports(project string) ([]SavedReport, error) {
@@ -227,7 +260,8 @@ func (s *Store) UpdateReport(project, id, name, reportType string, config map[st
 	}
 	ctx, cancel := timeout()
 	defer cancel()
-	return scanReport(s.db.QueryRowContext(ctx, `UPDATE saved_reports SET name=$3,config=$4,updated_at=now() WHERE project_id=$1 AND id=$2 AND report_type=$5 RETURNING id,project_id,name,report_type,config,created_by,created_at,updated_at`, project, id, name, raw, reportType))
+	item, err := scanReport(s.db.QueryRowContext(ctx, `UPDATE saved_reports SET name=$3,config=$4,updated_at=now() WHERE project_id=$1 AND id=$2 AND report_type=$5 RETURNING id,project_id,name,report_type,config,created_by,created_at,updated_at`, project, id, name, raw, reportType))
+	return item, mapDatabaseError(err)
 }
 
 func (s *Store) DeleteReport(project, id string) error {
@@ -266,7 +300,7 @@ func (s *Store) SaveDashboard(project, name, actor string, reportIDs []string) (
 	if err == nil {
 		err = json.Unmarshal(ids, &out.ReportIDs)
 	}
-	return out, err
+	return out, mapDatabaseError(err)
 }
 
 func (s *Store) Dashboards(project string) ([]Dashboard, error) {
@@ -318,7 +352,7 @@ func (s *Store) AddAnnotation(project, title, description, actor string, occurre
 	defer cancel()
 	var out Annotation
 	err := s.db.QueryRowContext(ctx, `INSERT INTO annotations(id,project_id,title,description,occurred_at,created_by) VALUES($1,$2,$3,$4,$5,$6) RETURNING id,project_id,title,description,occurred_at,created_by,created_at`, ID("ann_"), project, title, description, occurred, actor).Scan(&out.ID, &out.ProjectID, &out.Title, &out.Description, &out.OccurredAt, &out.CreatedBy, &out.CreatedAt)
-	return out, err
+	return out, mapDatabaseError(err)
 }
 
 func (s *Store) Annotations(project string, from, to time.Time) ([]Annotation, error) {
@@ -411,7 +445,7 @@ func (s *Store) UpsertEventDefinition(item EventDefinitionRecord) (EventDefiniti
 	if err == nil {
 		err = json.Unmarshal(savedRaw, &saved.ExpectedProperties)
 	}
-	return saved, err
+	return saved, mapDatabaseError(err)
 }
 
 func (s *Store) SaveAlert(item Alert) (Alert, error) {
@@ -424,7 +458,7 @@ func (s *Store) SaveAlert(item Alert) (Alert, error) {
 		item.ID = ID("alt_")
 	}
 	err := s.db.QueryRowContext(ctx, `INSERT INTO alerts(id,project_id,name,metric,comparison,threshold,enabled) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(id) DO UPDATE SET name=EXCLUDED.name,metric=EXCLUDED.metric,comparison=EXCLUDED.comparison,threshold=EXCLUDED.threshold,enabled=EXCLUDED.enabled WHERE alerts.project_id=EXCLUDED.project_id RETURNING id,project_id,name,metric,comparison,threshold,enabled,last_value,last_status,checked_at,created_at`, item.ID, item.ProjectID, item.Name, item.Metric, item.Comparison, item.Threshold, item.Enabled).Scan(&item.ID, &item.ProjectID, &item.Name, &item.Metric, &item.Comparison, &item.Threshold, &item.Enabled, &item.LastValue, &item.LastStatus, &item.CheckedAt, &item.CreatedAt)
-	return item, err
+	return item, mapDatabaseError(err)
 }
 
 func (s *Store) Alerts(project string) ([]Alert, error) {

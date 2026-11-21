@@ -48,7 +48,7 @@ func TestLegacyImportPreservesIDsAndIsRepeatable(t *testing.T) {
 	if len(events) != 1 || events[0].ID != event.ID || events[0].Properties["amount"] != 29.0 {
 		t.Fatal("event changed", events)
 	}
-	if _, err = s.UpdateProject(p.ID, "Edited after import", nil); err != nil {
+	if _, err = s.UpdateProject(p.ID, "Edited after import", nil, "UTC"); err != nil {
 		t.Fatal(err)
 	}
 	result, err = s.ImportJSONL(strings.NewReader(source))

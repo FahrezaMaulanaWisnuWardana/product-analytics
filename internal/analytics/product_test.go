@@ -8,6 +8,40 @@ import (
 	"time"
 )
 
+func TestProjectTimezoneValidationAndPersistence(t *testing.T) {
+	s, err := Open(testdb.URL(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	p, err := s.CreateProject("Zoned", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Timezone != "UTC" {
+		t.Fatalf("new project timezone: %q", p.Timezone)
+	}
+	for _, invalid := range []string{"", "Local", "Mars/Olympus", "Asia/Jakarta/Extra"} {
+		if err := ValidateTimezone(invalid); err == nil {
+			t.Fatalf("invalid timezone accepted: %q", invalid)
+		}
+	}
+	updated, err := s.UpdateProject(p.ID, "Zoned", nil, "Asia/Jakarta")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Timezone != "Asia/Jakarta" {
+		t.Fatalf("timezone not persisted: %q", updated.Timezone)
+	}
+	reloaded, ok, err := s.Project(p.ID)
+	if err != nil || !ok || reloaded.Timezone != "Asia/Jakarta" {
+		t.Fatalf("timezone not reloaded: %+v %v %v", reloaded, ok, err)
+	}
+	if _, err = s.UpdateProject(p.ID, "Zoned", nil, "Mars/Olympus"); err == nil {
+		t.Fatal("invalid timezone reached the database")
+	}
+}
+
 func TestWorkspaceProjectAndTokenLimits(t *testing.T) {
 	s, err := Open(testdb.URL(t))
 	if err != nil {

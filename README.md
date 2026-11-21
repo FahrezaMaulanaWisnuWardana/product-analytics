@@ -126,19 +126,70 @@ To run the binary directly on a Linux VPS (Ubuntu/Debian) or with a managed Post
 
 ### 3. Reverse Proxy Configuration
 
-The application validates the `Origin` header against the request's `Host` header to protect administrator sessions. Your reverse proxy **must preserve the original `Host` header** and terminate TLS.
+The application validates the `Origin` header against the request's `Host` header **and scheme** to protect administrator sessions. Your reverse proxy **must preserve the original `Host` header** and terminate TLS. The application does not rate-limit requests, so the proxy must throttle `POST /api/login` and `POST /capture` before public traffic reaches Pulse; the examples below include HSTS and starting budgets you should tune to your traffic.
 
 #### Caddy (Automated TLS)
+
+Caddy core has no rate limiter; build it with the [`caddy-ratelimit`](https://github.com/mholt/caddy-ratelimit) plugin. If it is not ordered by default, add the `order` directive:
+
 ```caddyfile
+{
+    order rate_limit before basicauth
+}
+
 analytics.example.com {
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+    }
+    rate_limit {
+        zone login {
+            match {
+                path /api/login
+            }
+            key { remote_host }
+            events 5 1m
+        }
+        zone capture {
+            match {
+                path /capture
+            }
+            key { remote_host }
+            events 100 1s
+        }
+    }
     reverse_proxy 127.0.0.1:8080
 }
 ```
 
+If Caddy is itself behind another proxy, configure `trusted_proxies` so `{remote_host}` is the client address rather than the upstream proxy.
+
 #### Nginx
+Put the zone definitions in the `http { }` block; the rest goes in the server block:
+
 ```nginx
+limit_req_zone $binary_remote_addr zone=pulse_login:10m rate=5r/m;
+limit_req_zone $binary_remote_addr zone=pulse_capture:10m rate=100r/s;
+limit_conn_zone $binary_remote_addr zone=pulse_conn:10m;
+
 server {
     server_name analytics.example.com;
+
+    limit_conn pulse_conn 20;
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+
+    location /api/login {
+        limit_req zone=pulse_login burst=5 nodelay;
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+
+    location /capture {
+        limit_req zone=pulse_capture burst=200 nodelay;
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+    }
 
     location / {
         proxy_pass http://127.0.0.1:8080;
@@ -165,6 +216,8 @@ server {
 | `PULSE_MAX_QUERY_EVENTS` | `100000` | Upper limit on events loaded into memory per query (returns HTTP 413 if exceeded). |
 | `PULSE_AUDIT_RETENTION_DAYS` | `365` | Days to retain workspace audit entries before daily cleanup. |
 | `PULSE_REVOKED_TOKEN_RETENTION_DAYS` | `90` | Days to retain revoked access-token records before daily cleanup. |
+| `PULSE_LOGIN_LIMIT_PER_MINUTE` | `10` | In-app fixed-window limit on `/api/login` attempts per client IP. The proxy should also rate-limit. |
+| `PULSE_CAPTURE_LIMIT_PER_MINUTE` | `600` | In-app limit on `/capture` requests per project key and client IP. |
 | `PULSE_GEOIP_DATABASE` | Disabled | Path to a local MaxMind-compatible country `.mmdb` database. |
 | `PULSE_TRUSTED_PROXIES` | None | Comma-separated CIDR ranges of proxies allowed to provide `X-Forwarded-For`. |
 
@@ -172,11 +225,12 @@ Workspaces are limited to 100 projects and 100 stored access-token records. Proj
 
 ### 5. Production Operations
 
-* **Health checks:** Monitor `/healthz` for process liveness and `/readyz` for database connectivity.
-* **Database backups:** Back up PostgreSQL regularly using `pg_dump`:
+* **Health checks:** Monitor `/healthz` for process liveness and `/readyz` for database connectivity. The Compose `app` service has a `/readyz` healthcheck.
+* **Metrics:** `/metrics` (admin token or session required) exposes Prometheus text counters for HTTP requests by method/status, failed sign-ins, accepted events, and database errors. Scrape it internally; do not expose it publicly.
+* **Database backups:** `make backup` writes a timestamped custom-format dump into `backups/` (mode 0600). Restore with `make restore BACKUP_FILE=backups/<file>.dump CONFIRM=RESTORE`; the confirmation is mandatory. Both scripts read credentials from `.env` or `DATABASE_URL` and never print them. Keep copies off-host and test a restore regularly.
   ```sh
-  # When using Docker Compose:
-  docker compose exec -t db pg_dump -U product_analytics product_analytics > backup.sql
+  make backup
+  make restore BACKUP_FILE=backups/product_analytics_<timestamp>.dump CONFIRM=RESTORE
   ```
 * **Upgrades:** Pull the latest code and rebuild. Database schema migrations execute idempotently inside a locked transaction upon process startup.
 
@@ -238,8 +292,9 @@ After import, product integrations keep using the same project keys and `/captur
 - Dashboard with users, events, sessions, page views, trends, comparisons, top events, popular pages, and recent activity.
 - Searchable event explorer, captured properties, user timelines, and a 15-second refresh.
 - Configurable ordered funnels with a 7-day conversion window and drop-off guidance.
-- Daily retention cohorts based on each person's first event across the full project history.
+- Daily retention cohorts based on each person's first event across the full project history, followed through today with a bounded 366-day observation window.
 - Exact-property segments shared by overview, events, people, funnels, retention, and paths.
+- Per-project IANA timezone (default UTC) for date ranges and all daily analytics boundaries.
 - Journey paths, funnel person/drop-off drill-downs, and server-shared saved analyses.
 - Tracking health with event definitions, identity/session coverage, and property-type drift warnings.
 - Light, dark, and system-preferred themes.
@@ -247,7 +302,7 @@ After import, product integrations keep using the same project keys and `/captur
 - Shared dashboards, timeline annotations, governed event definitions, and metric alert configuration.
 - Owner/editor/viewer access, hashed revocable tokens, audit history, and role-aware controls.
 - Retention enforcement, person deletion, ingestion-key rotation, project deletion, and export controls.
-- Token-protected APIs, HTTP-only SameSite session cookies, same-origin write checks, and security headers.
+- Token-protected APIs, hashed revocable admin sessions in HTTP-only SameSite cookies, in-app login/ingestion rate limits, same-origin write checks, HSTS behind TLS, and security headers.
 
 ## Connect a browser product
 
@@ -300,17 +355,20 @@ err = client.Capture(ctx, pulse.Event{
 
 ## API
 
-Administrator endpoints require `Authorization: Bearer <PULSE_ADMIN_TOKEN>` or a dashboard session cookie. Query endpoints take `project=<id>` and optionally `from=YYYY-MM-DD&to=YYYY-MM-DD`. End dates are inclusive, today is partial, and ranges are limited to 366 days. All analytics day boundaries are UTC.
+Administrator endpoints require `Authorization: Bearer <PULSE_ADMIN_TOKEN>` or a dashboard session cookie. Query endpoints take `project=<id>` and optionally `from=YYYY-MM-DD&to=YYYY-MM-DD`. End dates are inclusive, today is partial, and ranges are limited to 366 days.
+
+Each project has an IANA timezone (default `UTC`) set in Project settings. It drives day boundaries, daily charts, retention cohorts, and the date picker; events remain stored in UTC. "Use my local time" fills the field from the browser's detected timezone. Invalid names are rejected, and DST transitions are handled by advancing calendar days in that zone.
 
 | Method | Route | Purpose |
 | --- | --- | --- |
 | GET | `/healthz` | Process liveness |
 | GET | `/readyz` | PostgreSQL readiness (503 on failure) |
+| GET | `/metrics` | Prometheus text counters (admin token or session) |
 | GET | `/api/installation` | Public first-install status, no project details |
 | GET | `/sdk.js` | Browser SDK |
 | POST | `/capture` | Public project-key ingestion |
-| POST | `/api/login` | Exchange `{"token":"..."}` for an administrator cookie |
-| POST | `/api/logout` | Clear the cookie |
+| POST | `/api/login` | Exchange `{"token":"..."}` for a hashed, revocable 24 h administrator session cookie |
+| POST | `/api/logout` | Revoke the session and clear the cookie |
 | GET | `/api/me` | Current workspace identity and role |
 | GET/POST/DELETE | `/api/access-tokens` | List, issue, or revoke role-based workspace access (owner) |
 | GET | `/api/projects` | List projects and ingestion keys |
@@ -320,7 +378,7 @@ Administrator endpoints require `Authorization: Bearer <PULSE_ADMIN_TOKEN>` or a
 | GET | `/api/events` | Latest 500 matches; filters: `event`, `person`, `q` |
 | GET | `/api/people` | People active in the selected period |
 | GET | `/api/funnel` | Repeat `step` 2–8 times for ordered conversion |
-| GET | `/api/retention` | Daily cohorts with day 0 through day 7 retention |
+| GET | `/api/retention` | Daily cohorts with day 0 through the latest observable day (up to today) |
 | GET | `/api/paths` | Most common consecutive event transitions and unique people |
 | GET | `/api/catalog` | Event definitions, tracking coverage, and schema warnings |
 | GET | `/api/export` | All events for the project and date range |
