@@ -3,10 +3,62 @@ package analytics
 import (
 	"errors"
 	"fmt"
-	"pulse/internal/testdb"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
+
+	"pulse/internal/testdb"
 )
+
+func TestRetentionEventsMatchFullHistory(t *testing.T) {
+	s, err := Open(testdb.URL(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	p, err := s.CreateProject("Retention Load", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	day := at("2026-10-01T00:00:00Z")
+	batch := []Event{
+		{ID: "e1", ProjectID: p.ID, Name: "$pageview", DistinctID: "anon", Timestamp: day, Properties: map[string]any{"plan": "Pro", "note": strings.Repeat("x", 4096)}},
+		{ID: "e2", ProjectID: p.ID, Name: "$identify", DistinctID: "user1", Timestamp: day.Add(time.Hour), Properties: map[string]any{"$anon_distinct_id": "anon"}},
+		{ID: "e3", ProjectID: p.ID, Name: "$pageview", DistinctID: "user1", Timestamp: day.AddDate(0, 0, 1), Properties: map[string]any{"plan": "Pro"}},
+		{ID: "e4", ProjectID: p.ID, Name: "$pageview", DistinctID: "user2", Timestamp: day, Properties: map[string]any{"plan": "Free"}},
+	}
+	if _, err = s.AddBatch(batch); err != nil {
+		t.Fatal(err)
+	}
+	full, err := s.Events(p.ID, time.Time{}, day.AddDate(0, 0, 5))
+	if err != nil {
+		t.Fatal(err)
+	}
+	light, err := s.RetentionEvents(p.ID, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range light {
+		if e.Name != "$identify" && e.Properties != nil {
+			t.Fatalf("ordinary event carried properties: %+v", e)
+		}
+	}
+	from, to := day, day.AddDate(0, 0, 5)
+	for _, segment := range [][2]string{{"", ""}, {"plan", "Pro"}, {"plan", "Free"}} {
+		loaded, err := s.RetentionEvents(p.ID, segment[0], segment[1])
+		if err != nil {
+			t.Fatal(err)
+		}
+		fullSet := FilterProperties(CanonicalizeIdentity(full), segment[0], segment[1])
+		lightSet := FilterProperties(CanonicalizeIdentity(loaded), segment[0], segment[1])
+		want := Retention(fullSet, from, to, to, time.UTC)
+		got := Retention(lightSet, from, to, to, time.UTC)
+		if !reflect.DeepEqual(want, got) {
+			t.Fatalf("retention mismatch for segment %v:\nwant %+v\ngot  %+v", segment, want, got)
+		}
+	}
+}
 
 func TestProjectTimezoneValidationAndPersistence(t *testing.T) {
 	s, err := Open(testdb.URL(t))

@@ -1011,7 +1011,7 @@ func (s *server) api(w http.ResponseWriter, r *http.Request) {
 		// Load through "now" rather than to so cohorts keep maturing even when
 		// the selected report window ends in the past.
 		observeUntil := time.Now().UTC()
-		all, err := s.store.Events(p.ID, time.Time{}, observeUntil)
+		all, err := s.store.RetentionEvents(p.ID, r.URL.Query().Get("property"), r.URL.Query().Get("value"))
 		if err != nil {
 			databaseError(w, err)
 			return

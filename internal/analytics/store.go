@@ -316,6 +316,48 @@ func (s *Store) AddBatch(events []Event) (int, error) {
 	}
 	return n, nil
 }
+
+// RetentionEvents loads the full history needed by the retention report without
+// the fields that report never reads. For unsegmented reports, PostgreSQL
+// replaces properties with an empty object on ordinary events; only $identify
+// events keep their properties so identity aliases can still be resolved.
+func (s *Store) RetentionEvents(project, property, value string) ([]Event, error) {
+	ctx, cancel := timeout()
+	defer cancel()
+	query := `SELECT event,distinct_id,occurred_at,properties FROM events WHERE project_id=$1`
+	if strings.TrimSpace(property) == "" || strings.TrimSpace(value) == "" {
+		query = `SELECT event,distinct_id,occurred_at,CASE WHEN event='$identify' THEN properties ELSE '{}'::jsonb END FROM events WHERE project_id=$1`
+	}
+	rows, err := s.db.QueryContext(ctx, query, project)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Event{}
+	totalBytes := 0
+	for rows.Next() {
+		var e Event
+		var props []byte
+		if err = rows.Scan(&e.Name, &e.DistinctID, &e.Timestamp, &props); err != nil {
+			return nil, err
+		}
+		if len(props) > 2 {
+			if err = json.Unmarshal(props, &e.Properties); err != nil {
+				return nil, err
+			}
+		}
+		totalBytes += len(props) + len(e.Name) + len(e.DistinctID)
+		if totalBytes > MaxQueryBytes {
+			return nil, fmt.Errorf("%w: narrow the query below %d bytes", ErrQueryBytesLimit, MaxQueryBytes)
+		}
+		out = append(out, e)
+		if len(out) > s.maxQueryEvents {
+			return nil, fmt.Errorf("%w: narrow the query below %d events", ErrQueryEventLimit, s.maxQueryEvents)
+		}
+	}
+	return out, rows.Err()
+}
+
 func insertEvents(ctx context.Context, tx *sql.Tx, events []Event, maxEventsPerProject int) (int, error) {
 	// Consistent lock ordering prevents deadlocks for overlapping concurrent batches.
 	ordered := append([]Event{}, events...)
